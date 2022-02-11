@@ -1,17 +1,21 @@
 # @ File(label='Choose a directory with datasets', style='directory') datasets_dir
 # @ File(label='Choose a file with metadata about embryo directions', style='file') metadata_file
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
-
+#@ DatasetService ds
+#@ DatasetIOService io
+#@ OpService ops
+#@ UIService ui
+#@ ImageJ ij
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 
 import os
+import re
 import fnmatch
 import json
 import logging
 from datetime import datetime
 
-from numpy import safe_eval
 from java.io import File
 from ij.io import FileSaver
 from ij.io import OpenDialog
@@ -25,6 +29,10 @@ from ij.plugin.frame import RoiManager
 from ij.process import ImageProcessor
 from fiji.selection import Select_Bounding_Box
 from ij.plugin import RoiRotator
+from net.imglib2.view import Views
+
+from net.imagej.ops import Ops
+from net.imagej.axis import Axes
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -50,6 +58,44 @@ Example JSON metadata file contents:
 		}
 	]
 }"""
+
+METADATA_DIR_NAME = "(B1)-Metadata"
+TSTACKS_DIR_NAME = "(B3)-TStacks-ZM"
+RAW_IMAGES_DIR_NAME = "(P0)-ZStacks-Raw"
+
+class FredericFile:
+	"""
+	File naming for light-sheet image files. Frederic Strobl™ 
+	Example file name: MGolden2022A-DS0001TP0001DR0001CH0001PL(ZS).tif
+	:param file_name: full image file name
+	:type file_name: str
+	"""
+	dataset_name = ""
+	dataset_id = 0
+	time_point = ""
+	direction = ""
+	channel = ""
+	plane = ""
+	extension = ""
+
+	def __init__(self, file_name):
+		name_parts = re.split("-DS|TP|DR|CH|PL|\.", file_name)
+		if len(name_parts) != 7:
+			raise Exception("Image file name is improperly formatted! Check documentation inside the script.")
+		self.dataset_name, self.dataset_id, self.time_point, self.direction, self.channel, self.plane, self.extension = name_parts
+		self.extension.lower()
+
+	def get_name(self):
+		return "%s-DS%sTP%sDR%sCH%sPL%s.%s" % (self.dataset_name, 
+											   self.dataset_id, 
+											   self.time_point, 
+											   self.direction, 
+											   self.channel, 
+											   self.plane, 
+											   self.extension)
+
+		
+
 
 
 def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
@@ -96,7 +142,23 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		move_files(
 			raw_images_dir, specimens, dataset_id, dataset_name_prefix)
 		print("Arranged files for the dataset: DS%04d" % dataset_id)
-		crop_dataset(dataset, raw_images_dir)
+
+		raw_images_direction_dirs = make_directions_dirs(raw_images_dir)
+		root_dataset_dir = os.path.split(raw_images_dir)[0]
+		meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
+		meta_d_dirs = make_directions_dirs(meta_dir)
+		tstack_dataset_dirs = make_directions_dirs(
+		os.path.join(root_dataset_dir, TSTACKS_DIR_NAME))
+		for raw_dir, tstack_dir, m_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs):
+			max_proj_stack = make_max_Z_projections_for_folder(raw_dir, tstack_dir)
+			max_time_proj = project_a_stack(max_proj_stack, "TIME")
+			ui.show(max_time_proj)
+			print os.path.join(m_dir, "time_projection_of_max_proj.tif")
+			io.save(max_time_proj, os.path.join(m_dir, "time_projection_of_max_proj.tif"))
+			
+			# crop_template = create_crop_template(dataset, max_time_proj)
+		# for loop for direction cropping
+			# crop_direction(dataset, raw_images_dir, crop_template)
 
 
 def get_raw_images_dir(datasets_dir, dataset_id):
@@ -111,20 +173,26 @@ def get_raw_images_dir(datasets_dir, dataset_id):
 		print("Error: there are no directories for the dataset with ID: %04d. Skipping it." % dataset_id)
 		return None
 	raw_images_dir = os.path.join(
-		datasets_dir, this_dataset_dir[0], "(P0)-ZStacks-Raw")
+		datasets_dir, this_dataset_dir[0], RAW_IMAGES_DIR_NAME)
 	if not os.path.isdir(raw_images_dir):
-		print("Error: there are no (P0)-ZStacks-Raw directoriy for the dataset with ID: %04d. Skipping it." % dataset_id)
+		print("Error: there are no %s directoriy for the dataset with ID: %04d. Skipping it." %
+		      (RAW_IMAGES_DIR_NAME, dataset_id))
 		return None
 	return raw_images_dir
 
-
-def move_files(raw_images_dir, specimens_per_direction, dataset_id, dataset_name_prefix):
+def make_directions_dirs(input_dir):
 	direction_dirs = []
 	for i in range(1, 5):
-		new_dir = os.path.join(raw_images_dir, "DR" + str(i).zfill(4))
-		direction_dirs.append(new_dir)
-		if not os.path.exists(new_dir):
-			os.mkdir(new_dir)
+			new_dir = os.path.join(input_dir, "DR" + str(i).zfill(4))
+			direction_dirs.append(new_dir)
+			if not os.path.exists(new_dir):
+				os.mkdir(new_dir)
+	return direction_dirs
+		
+		
+
+def move_files(raw_images_dir, specimens_per_direction, dataset_id, dataset_name_prefix):
+	direction_dirs = make_directions_dirs(raw_images_dir)
 
 	for file_name in os.listdir(raw_images_dir):
 		file_path = os.path.join(raw_images_dir, file_name)
@@ -174,41 +242,119 @@ def is_dataset_ID_input_valid(dataset_id):
 	return False
 
 
-def crop_dataset(dataset_meta, raw_images_dir):
-	for direction in  # dataset_meta[directions]:
-		raw_images_direction_dir = raw_images_dir+direction
-		max_projections_dir =  # (B3)-TStacks-ZM in root dataset dir + direction dir
-		cropped_raw_zstacks_dir = #B2
-		metadata_dir = #B1 + direction
+# def crop_direction(dataset_meta, raw_images_dir, crop_template):
+	
+# 	raw_images_direction_dirs = make_directions_dirs(raw_images_dir)
+# 	root_dataset_dir = os.path.split(raw_images_dir)[0]
+# 	tstack_dataset_dirs = make_directions_dirs(
+# 		os.path.join(root_dataset_dir, "(B3)-TStacks-ZM"))
+# 	for raw_dir, tstack_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs):
+# 		cropped_raw_zstacks_dir = #B2
+# 		metadata_dir = #B1 + direction
 
-		if does_crop_finished_file_exist(metadata_dir):
-			continue
+# 		if does_crop_finished_file_exist(metadata_dir):
+# 			continue
 
-		max_proj_stack = make_max_projections(raw_images_direction_dir)
-		save(max_proj_stack, max_projections_dir+backup_subdir)
-		max_time_projection = make_max_time_projection(max_proj_stack)
-		crop_template, cropped_max_time_projection = create_crop_template(max_time_projection)
-		save(crop_template, metadata_dir)
-		save(cropped_max_time_projection, metadata_dir)
-		cropped_max_projections_stack = crop_stack_by_template(max_time_projection, crop_template)
-		save(cropped_max_projections_stack, max_projections_dir)
-		crop_many_stacks(raw_images_direction_dir, cropped_raw_zstacks_dir, crop_template)
-		first_raw_cropped_zstack =  # first zstack from cropped_raw_zstacks_dir
-		middle_plane = get_embryo_middle_plane(first_raw_cropped_zstack)
-		subset_ebryo_planes(middle_plane, cropped_raw_zstacks_dir)
+# 		max_proj_stack = make_max_Z_projections_for_folder(raw_images_direction_dir)
+# 		save(max_proj_stack, tstack_dir+backup_subdir)
+# 		max_time_projection = make_max_time_projection(max_proj_stack)
+# 		crop_template, cropped_max_time_projection = create_crop_template(max_time_projection)
+# 		save(crop_template, metadata_dir)
+# 		save(cropped_max_time_projection, metadata_dir)
+# 		cropped_max_projections_stack = crop_stack_by_template(max_time_projection, crop_template)
+# 		save(cropped_max_projections_stack, tstack_dir)
+# 		crop_many_stacks(raw_images_direction_dir, cropped_raw_zstacks_dir, crop_template)
+# 		first_raw_cropped_zstack =  # first zstack from cropped_raw_zstacks_dir
+# 		middle_plane = get_embryo_middle_plane(first_raw_cropped_zstack)
+# 		subset_ebryo_planes(middle_plane, cropped_raw_zstacks_dir)
+
+def get_tiffs_in_directory(directory):
+	file_names = []
+	for fname in os.listdir(directory):
+		if fname.lower().endswith(".tif"):
+			file_names.append(os.path.join(directory, fname))
+	file_names = sorted(file_names)
+	if len(file_names) < 1:
+		raise Exception("No image files found in %s" % directory)	
+	return file_names
 
 
-def make_max_projections(raw_images_dir):
+def project_a_stack(stack, axis_to_project_over):
+	"""Project a stack of images along a specified axis 
+
+	Args:
+		stack net.imagej.Dataset.class: stack of images to project
+		axis_to_project_over str: along this axis to project
+
+	Returns:
+		net.imagej.DefaultDataset: max-projection
+	"""
+	# Setting thrid axis type to Z, because stacks from microscopes load with third axis as Unknown
+	for i in range(3):
+		if str(stack.axis(i).type()) == str(Axes.unknown()):
+			stack.axis(i).setType(Axes.get(axis_to_project_over))
+
+	p_dim = stack.dimensionIndex(getattr(Axes, axis_to_project_over))
+	# Select which dimension to project
+	if p_dim == -1:
+		raise Exception("%s dimension not found." % axis_to_project_over)
+
+	if stack.dimension(p_dim) < 2:
+		raise Exception("%s dimension has only one frame." % axis_to_project_over)
+
+	# Write the output dimensions
+	new_dimensions = [stack.dimension(d) for d in range(
+		0, stack.numDimensions()) if d != p_dim]
+
+	# Create memory for projection
+	projected = ops.create().img(new_dimensions)
+
+	# Create an instance of the op
+	proj_op = ops.op(Ops.Stats.Max, stack)
+
+	# call the project op passing
+	# maxProjection: img to put projection in
+	# image: img to project
+	# op: the op used to generate the projection (in this case "max")
+	# dimensionToProject: the dimension to project
+	# What is happening here from the Java standpoint?....
+	ops.transform().project(projected, stack, proj_op, p_dim)
+
+	# Create the output Dataset
+	return ds.create(projected)
+
+
+def make_max_Z_projections_for_folder(input_dir, output_dir):
+	"""Takes all stacks from a directory, does their max-projection, makes a stack of max-projections, saves it to output directory and returns it. 
+
+	Args:
+		raw_images_dir (string): path to stacks of images
+
+	Returns:
+		net.imagej.DefaultDataset: stack of max-projections
+	"""
+	fnames = get_tiffs_in_directory(input_dir)
+	# Open and stack images
+	max_proj_stack = []
+	for fname in fnames:
+		stack = io.open(fname)
+		# Select which dimension to project
+		max_proj = project_a_stack(stack, "Z")
+		max_proj_stack.append(max_proj)
+	tstack_name = FredericFile(os.path.split(fnames[0])[1])
+	tstack_name.time_point = "(TS)"
+	max_proj_stack = Views.stack(max_proj_stack)
+	max_proj_stack = ds.create(max_proj_stack)
+	# Set the third axis to the correct type
+	max_proj_stack.axis(2).setType(getattr(Axes, "TIME"))
+	io.save(max_proj_stack, os.path.join(output_dir, tstack_name.get_name()))
 	return max_proj_stack
 
-def make_max_time_projection(max_proj_stack):
-	return max_time_projection
 
-
-
-def create_crop_template(max_time_projection):
+def create_crop_template(max_time_projection, root_dataset_dir):
 	IJ.run("Clear Results")
-	file_path = "/home/tema/work/for_Mashunja/test_images/max_time_project_of_max_project.tif"
+	meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
+	meta_d_dirs = make_directions_dirs(meta_dir)
 
 	imp = IJ.openImage(file_path)
 	imp.show()
@@ -274,7 +420,7 @@ def crop_stack_by_template(stack, template):
 
 
 if __name__ in ['__builtin__', '__main__']:
-	# process_datasets("/home/tema/work/for_Mashunja/fiji_scripts/test_dir/",
-	#						 "/home/tema/work/for_Mashunja/fiji_scripts/directions.json",
-	#						 dataset_name_prefix="MGolden2022A-")
+	# process_datasets("/home/tema/work/for_Mashunja/fiji_scripts/tmp/test_dir/",
+	# 						 "/home/tema/work/for_Mashunja/fiji_scripts/tmp/directions.json",
+	# 						 dataset_name_prefix="MGolden2022A-")
 	process_datasets(datasets_dir, metadata_file, dataset_name_prefix)
