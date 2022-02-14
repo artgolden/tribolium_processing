@@ -20,7 +20,7 @@ from datetime import datetime
 from java.io import File
 from ij.io import FileSaver
 from ij.io import OpenDialog
-from ij import IJ, ImagePlus
+from ij import IJ, ImagePlus, ImageStack
 from ij.plugin.filter import RankFilters  
 from fiji.threshold import Auto_Threshold
 from ij.plugin.filter import ParticleAnalyzer 
@@ -30,6 +30,8 @@ from ij.plugin.frame import RoiManager
 from ij.process import ImageProcessor
 from fiji.selection import Select_Bounding_Box
 from ij.plugin import RoiRotator
+from ij.plugin import ZProjector
+
 from net.imglib2.view import Views
 
 from net.imagej.ops import Ops
@@ -153,13 +155,15 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		os.path.join(root_dataset_dir, TSTACKS_DIR_NAME))
 		for raw_dir, tstack_dir, m_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs):
 			max_proj_stack = make_max_Z_projections_for_folder(raw_dir, tstack_dir)
-			max_time_proj = project_a_stack(max_proj_stack, "TIME")
+			max_time_proj = project_a_stack(max_proj_stack)
 			max_time_proj_file_name = get_tiff_name_from_dir(tstack_dir)
 			max_time_proj_file_name.time_point = "(TM)"
 			logging.info("Created max time projection\n" + os.path.join(m_dir, max_time_proj_file_name.get_name()))
-			io.save(max_time_proj, os.path.join(m_dir, max_time_proj_file_name.get_name()))
+			fs = FileSaver(max_time_proj)
+			fs.saveAsTiff(os.path.join(m_dir, max_time_proj_file_name.get_name()))
 			crop_template, cropped_max_time_proj = create_crop_template(max_time_proj, m_dir)
-			io.save(cropped_max_time_proj, os.path.join(
+			fs = FileSaver(cropped_max_time_proj)
+			fs.saveAsTiff(os.path.join(
 				m_dir, "cropped_max_time_proj.tif"))
 		# for loop for direction cropping
 			# crop_direction(dataset, raw_images_dir, crop_template)
@@ -295,49 +299,20 @@ def get_tiffs_in_directory(directory):
 	return file_names
 
 
-def project_a_stack(stack, axis_to_project_over):
+def project_a_stack(stack):
 	"""Project a stack of images along a specified axis 
 
 	Args:
-		stack net.imagej.Dataset.class: stack of images to project
-		axis_to_project_over str: along this axis to project
+		stack ImagePlus: stack of images to project
 
 	Returns:
-		net.imagej.DefaultDataset: max-projection
+		ImagePlus: max-projection
 	"""
-	# Setting thrid axis type to Z, because stacks from microscopes load with third axis as Unknown
-	for i in range(3):
-		if str(stack.axis(i).type()) == str(Axes.unknown()):
-			stack.axis(i).setType(Axes.get(axis_to_project_over))
-
-	p_dim = stack.dimensionIndex(getattr(Axes, axis_to_project_over))
-	# Select which dimension to project
-	if p_dim == -1:
-		raise Exception("%s dimension not found." % axis_to_project_over)
-
-	if stack.dimension(p_dim) < 2:
-		raise Exception("%s dimension has only one frame." % axis_to_project_over)
-
-	# Write the output dimensions
-	new_dimensions = [stack.dimension(d) for d in range(
-		0, stack.numDimensions()) if d != p_dim]
-
-	# Create memory for projection
-	projected = ops.create().img(new_dimensions)
-
-	# Create an instance of the op
-	proj_op = ops.op(Ops.Stats.Max, stack)
-
-	# call the project op passing
-	# maxProjection: img to put projection in
-	# image: img to project
-	# op: the op used to generate the projection (in this case "max")
-	# dimensionToProject: the dimension to project
-	# What is happening here from the Java standpoint?....
-	ops.transform().project(projected, stack, proj_op, p_dim)
-
-	# Create the output Dataset
-	return ds.create(projected)
+	zp = ZProjector(stack)
+	zp.setMethod(ZProjector.MAX_METHOD)
+	zp.doProjection()
+	zpimp = zp.getProjection()
+	return zpimp
 
 
 def make_max_Z_projections_for_folder(input_dir, output_dir):
@@ -351,27 +326,29 @@ def make_max_Z_projections_for_folder(input_dir, output_dir):
 	"""
 	fnames = get_tiffs_in_directory(input_dir)
 	# Open and stack images
-	max_proj_stack = []
+	img_for_dims = IJ.openImage(fnames[0])
+	stack_list = []
 	for fname in fnames:
-		stack = io.open(fname)
+		stack = IJ.openImage(fname)
 		# Select which dimension to project
-		max_proj = project_a_stack(stack, "Z")
-		max_proj_stack.append(max_proj)
+		max_proj = project_a_stack(stack)
+		stack_list.append(max_proj.getProcessor())
 	tstack_name = FredericFile(os.path.split(fnames[0])[1])
 	tstack_name.time_point = "(TS)"
 	tstack_name.plane = "(ZM)"
-	max_proj_stack = Views.stack(max_proj_stack)
-	max_proj_stack = ds.create(max_proj_stack)
-	# Set the third axis to the correct type
-	max_proj_stack.axis(2).setType(getattr(Axes, "TIME"))
-	io.save(max_proj_stack, os.path.join(output_dir, tstack_name.get_name()))
+	max_proj_stack = ImageStack(img_for_dims.width, img_for_dims.height)
+	for slice in stack_list:
+		max_proj_stack.addSlice(None, slice)
+	max_proj_stack = ImagePlus("max_proj", max_proj_stack)
+	fs = FileSaver(max_proj_stack)
+	fs.saveAsTiff( os.path.join(output_dir, tstack_name.get_name()))
 	return max_proj_stack
 
 
 def create_crop_template(max_time_projection, meta_dir):
 	IJ.run("Clear Results")
 	#TODO: fix legacy import
-	imp = convert.convert(max_time_projection, ImagePlus)
+	imp = max_time_projection
 	# imp.show()
 	ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
 
@@ -432,9 +409,10 @@ def create_crop_template(max_time_projection, meta_dir):
 	final_imp = final_imp.crop()
 	IJ.run(final_imp, "Rotate 90 Degrees Right", "")
 	IJ.run(final_imp, "Flip Horizontally", "")
-	cropped_max_time_proj = convert.convert(final_imp, Dataset)
+	cropped_max_time_proj = final_imp
 	final_imp.show()
 	# ui.show(cropped_max_time_proj)
+	print "Finished one template!"
 	roim.close()
 	table.reset()
 	return (crop_template, cropped_max_time_proj)
