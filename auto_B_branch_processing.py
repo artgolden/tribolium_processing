@@ -6,6 +6,7 @@
 #@ OpService ops
 #@ UIService ui
 #@ ImageJ ij
+#@ ConvertService convert
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 
@@ -33,6 +34,7 @@ from net.imglib2.view import Views
 
 from net.imagej.ops import Ops
 from net.imagej.axis import Axes
+from net.imagej import Dataset
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -152,11 +154,13 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		for raw_dir, tstack_dir, m_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs):
 			max_proj_stack = make_max_Z_projections_for_folder(raw_dir, tstack_dir)
 			max_time_proj = project_a_stack(max_proj_stack, "TIME")
-			ui.show(max_time_proj)
-			print os.path.join(m_dir, "time_projection_of_max_proj.tif")
-			io.save(max_time_proj, os.path.join(m_dir, "time_projection_of_max_proj.tif"))
-			
-			# crop_template = create_crop_template(dataset, max_time_proj)
+			max_time_proj_file_name = get_tiff_name_from_dir(tstack_dir)
+			max_time_proj_file_name.time_point = "(TM)"
+			logging.info("Created max time projection\n" + os.path.join(m_dir, max_time_proj_file_name.get_name()))
+			io.save(max_time_proj, os.path.join(m_dir, max_time_proj_file_name.get_name()))
+			crop_template, cropped_max_time_proj = create_crop_template(max_time_proj, m_dir)
+			io.save(cropped_max_time_proj, os.path.join(
+				m_dir, "cropped_max_time_proj.tif"))
 		# for loop for direction cropping
 			# crop_direction(dataset, raw_images_dir, crop_template)
 
@@ -189,7 +193,19 @@ def make_directions_dirs(input_dir):
 				os.mkdir(new_dir)
 	return direction_dirs
 		
-		
+
+def get_tiff_name_from_dir(input_dir):
+	file_name = None
+	for fname in os.listdir(input_dir):
+		if fname.lower().endswith(".tif"):
+			file_name = fname
+		break
+	if file_name == None:
+		raise Exception("Did not find any TIFF files in a directory.")
+
+	file_name = FredericFile(file_name)
+	return file_name
+
 
 def move_files(raw_images_dir, specimens_per_direction, dataset_id, dataset_name_prefix):
 	direction_dirs = make_directions_dirs(raw_images_dir)
@@ -343,6 +359,7 @@ def make_max_Z_projections_for_folder(input_dir, output_dir):
 		max_proj_stack.append(max_proj)
 	tstack_name = FredericFile(os.path.split(fnames[0])[1])
 	tstack_name.time_point = "(TS)"
+	tstack_name.plane = "(ZM)"
 	max_proj_stack = Views.stack(max_proj_stack)
 	max_proj_stack = ds.create(max_proj_stack)
 	# Set the third axis to the correct type
@@ -351,15 +368,12 @@ def make_max_Z_projections_for_folder(input_dir, output_dir):
 	return max_proj_stack
 
 
-def create_crop_template(max_time_projection, root_dataset_dir):
+def create_crop_template(max_time_projection, meta_dir):
 	IJ.run("Clear Results")
-	meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
-	meta_d_dirs = make_directions_dirs(meta_dir)
-
-	imp = IJ.openImage(file_path)
-	imp.show()
+	#TODO: fix legacy import
+	imp = convert.convert(max_time_projection, ImagePlus)
+	# imp.show()
 	ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
-
 
 	imp2 = ImagePlus("mask", ip)
 	# Remove noise by running a median filter
@@ -371,47 +385,58 @@ def create_crop_template(max_time_projection, root_dataset_dir):
 	triag_threshold = Auto_Threshold.Triangle(hist)
 	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
 	#ip.createMask()
-	
 	IJ.run(imp2, "Convert to Mask", "")
-	imp2.show()
+	# imp2.show()
 	table = ResultsTable()
-	roim = RoiManager() # Initialise without display
-	MIN_PARTICLE_SIZE = 10000; # pixel ^ 2
+	roim = RoiManager()  # Initialise without display
+	MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
 	MAX_PARTICLE_SIZE = float("inf")
 	ParticleAnalyzer.setRoiManager(roim)
 	pa = ParticleAnalyzer(
-						 ParticleAnalyzer.ADD_TO_MANAGER,
-						 Measurements.ELLIPSE,
-						 table,
-						 MIN_PARTICLE_SIZE,
-						 MAX_PARTICLE_SIZE
-						 )
+            ParticleAnalyzer.ADD_TO_MANAGER,
+            Measurements.ELLIPSE,
+            table,
+            MIN_PARTICLE_SIZE,
+            MAX_PARTICLE_SIZE
+        )
 	pa.analyze(imp2)
 	rot_angle = round(table.getValue("Angle", 0))
-	print rot_angle
+	# print rot_angle
 	roi_arr = roim.getRoisAsArray()
+	roim.runCommand('reset')
 	imp.setRoi(roi_arr[len(roi_arr) - 1])
 	IJ.run(imp, "Select Bounding Box (guess background color)", "")
 	bounding_roi = imp.getRoi()
 	# print bounding_roi.getRotationCenter().getBounds()
 	bounding_center_x = bounding_roi.getContourCentroid()[0]
 	bounding_center_y = bounding_roi.getContourCentroid()[1]
-	IJ.run(imp, "Specify...", "width=1050 height=600 x=%s y=%s centered" % (bounding_center_x, bounding_center_y))
+	IJ.run(imp, "Specify...", "width=1050 height=600 x=%s y=%s centered" %
+	       (bounding_center_x, bounding_center_y))
+	roim.runCommand('reset')
 	bounding_roi = imp.getRoi()
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
 	imp.setRoi(bounding_roi_rot, True)
+	crop_template = imp.getRoi()
+	imp.show()
+	roim.addRoi(crop_template)
+	roim.select(0)
+	roim.runCommand("Save", os.path.join(meta_dir, "crop_template.roi"))
 	final_imp = imp.crop()
 	IJ.run(final_imp, "Select All", "")
-	IJ.run(final_imp, "Rotate... ", "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
+	IJ.run(final_imp, "Rotate... ",
+	       "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
 	final_center_x = final_imp.getWidth() / 2
 	final_center_y = final_imp.getHeight() / 2
-	print final_center_x
 	IJ.run(final_imp, "Specify...", "width=1050 height=600 x=%s y=%s centered" %
-		   (final_center_x, final_center_y))
+            (final_center_x, final_center_y))
 	final_imp = final_imp.crop()
 	IJ.run(final_imp, "Rotate 90 Degrees Right", "")
 	IJ.run(final_imp, "Flip Horizontally", "")
+	cropped_max_time_proj = convert.convert(final_imp, Dataset)
 	final_imp.show()
+	# ui.show(cropped_max_time_proj)
+	roim.close()
+	table.reset()
 	return (crop_template, cropped_max_time_proj)
 
 
