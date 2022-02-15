@@ -31,6 +31,7 @@ from ij.process import ImageProcessor
 from fiji.selection import Select_Bounding_Box
 from ij.plugin import RoiRotator
 from ij.plugin import ZProjector
+from ij.io import Opener
 
 from net.imglib2.view import Views
 
@@ -66,6 +67,7 @@ Example JSON metadata file contents:
 METADATA_DIR_NAME = "(B1)-Metadata"
 TSTACKS_DIR_NAME = "(B3)-TStacks-ZM"
 RAW_IMAGES_DIR_NAME = "(P0)-ZStacks-Raw"
+RAW_CROPPED_DIR_NAME = "(B2)-ZStacks"
 
 class FredericFile:
 	"""
@@ -153,18 +155,42 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		meta_d_dirs = make_directions_dirs(meta_dir)
 		tstack_dataset_dirs = make_directions_dirs(
 		os.path.join(root_dataset_dir, TSTACKS_DIR_NAME))
-		for raw_dir, tstack_dir, m_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs):
-			max_proj_stack = make_max_Z_projections_for_folder(raw_dir, tstack_dir)
+		raw_cropped_dirs = make_directions_dirs(
+                    os.path.join(root_dataset_dir, RAW_CROPPED_DIR_NAME))
+		for raw_dir, tstack_dir, m_dir, raw_cropped_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, raw_cropped_dirs):
+			backup_dir = os.path.join(tstack_dir, "uncropped_backup")
+			if not os.path.exists(backup_dir):
+				os.mkdir(backup_dir)
+			max_proj_stack = make_max_Z_projections_for_folder(
+				raw_dir, os.path.join(tstack_dir, "uncropped_backup"))
+
 			max_time_proj = project_a_stack(max_proj_stack)
-			max_time_proj_file_name = get_tiff_name_from_dir(tstack_dir)
+			max_time_proj_file_name = get_tiff_name_from_dir(
+				os.path.join(tstack_dir, "uncropped_backup"))
 			max_time_proj_file_name.time_point = "(TM)"
 			logging.info("Created max time projection\n" + os.path.join(m_dir, max_time_proj_file_name.get_name()))
 			fs = FileSaver(max_time_proj)
 			fs.saveAsTiff(os.path.join(m_dir, max_time_proj_file_name.get_name()))
-			crop_template, cropped_max_time_proj = create_crop_template(max_time_proj, m_dir)
+
+			crop_template, cropped_max_time_proj = create_crop_template(max_time_proj, m_dir, dataset)
 			fs = FileSaver(cropped_max_time_proj)
 			fs.saveAsTiff(os.path.join(
 				m_dir, "cropped_max_time_proj.tif"))
+
+			cropped_tstack_file_name = get_tiff_name_from_dir(
+				raw_dir)
+			cropped_tstack_file_name.time_point = "(TS)"
+			cropped_tstack_file_name.plane = "(ZM)"
+			cropped_tstack = crop_stack_by_template(max_proj_stack, crop_template, dataset)
+			fs = FileSaver(cropped_tstack)
+			fs.saveAsTiff(os.path.join(tstack_dir, cropped_tstack_file_name.get_name()))
+
+			for raw_stack_file_name in get_tiffs_in_directory(raw_dir):
+				raw_stack = IJ.openImage(raw_stack_file_name)
+				raw_stack_cropped = crop_stack_by_template(raw_stack, crop_template, dataset)
+				fs = FileSaver(raw_stack_cropped)
+				fs.saveAsTiff(os.path.join(raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
+
 		# for loop for direction cropping
 			# crop_direction(dataset, raw_images_dir, crop_template)
 
@@ -300,7 +326,7 @@ def get_tiffs_in_directory(directory):
 
 
 def project_a_stack(stack):
-	"""Project a stack of images along a specified axis 
+	"""Project a stack of images along the Z axis 
 
 	Args:
 		stack ImagePlus: stack of images to project
@@ -319,10 +345,11 @@ def make_max_Z_projections_for_folder(input_dir, output_dir):
 	"""Takes all stacks from a directory, does their max-projection, makes a stack of max-projections, saves it to output directory and returns it. 
 
 	Args:
-		raw_images_dir (string): path to stacks of images
+		input_dir (string): path to stacks of images (has to be images from ImagePlus objects)
+		output_dir (string): path to output folder
 
 	Returns:
-		net.imagej.DefaultDataset: stack of max-projections
+		ImagePlus: stack of max-projections
 	"""
 	fnames = get_tiffs_in_directory(input_dir)
 	# Open and stack images
@@ -345,9 +372,22 @@ def make_max_Z_projections_for_folder(input_dir, output_dir):
 	return max_proj_stack
 
 
-def create_crop_template(max_time_projection, meta_dir):
+def create_crop_template(max_time_projection, meta_dir, dataset):
+	"""Crop max_time_projection, create crop template .roi object, save it in meta_dir.
+
+	Args:
+		max_time_projection (ImagePlus): a single image of max projection of a time stack of max projections
+		meta_dir (str): full path to metadata dir
+		dataset (dict): metadata about the dataset to extract information about embryo orientation
+
+	Returns:
+		crop_template (Roi): bounding box around the embryo with proper rotation and size
+		cropped_max_time_proj (ImagePlus): cropped max time projection
+	"""
 	IJ.run("Clear Results")
-	#TODO: fix legacy import
+	#TODO:
+	# - Rotate an image based on a parameter in JSON file 
+	# - Create switching of different size bounding boxes based on embryo size
 	imp = max_time_projection
 	# imp.show()
 	ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
@@ -365,7 +405,7 @@ def create_crop_template(max_time_projection, meta_dir):
 	IJ.run(imp2, "Convert to Mask", "")
 	# imp2.show()
 	table = ResultsTable()
-	roim = RoiManager()  # Initialise without display
+	roim = RoiManager(False)  # Initialise without display (boolean value is ignored)
 	MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
 	MAX_PARTICLE_SIZE = float("inf")
 	ParticleAnalyzer.setRoiManager(roim)
@@ -387,6 +427,7 @@ def create_crop_template(max_time_projection, meta_dir):
 	# print bounding_roi.getRotationCenter().getBounds()
 	bounding_center_x = bounding_roi.getContourCentroid()[0]
 	bounding_center_y = bounding_roi.getContourCentroid()[1]
+	
 	IJ.run(imp, "Specify...", "width=1050 height=600 x=%s y=%s centered" %
 	       (bounding_center_x, bounding_center_y))
 	roim.runCommand('reset')
@@ -394,7 +435,7 @@ def create_crop_template(max_time_projection, meta_dir):
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
 	imp.setRoi(bounding_roi_rot, True)
 	crop_template = imp.getRoi()
-	imp.show()
+	# imp.show()
 	roim.addRoi(crop_template)
 	roim.select(0)
 	roim.runCommand("Save", os.path.join(meta_dir, "crop_template.roi"))
@@ -406,20 +447,65 @@ def create_crop_template(max_time_projection, meta_dir):
 	final_center_y = final_imp.getHeight() / 2
 	IJ.run(final_imp, "Specify...", "width=1050 height=600 x=%s y=%s centered" %
             (final_center_x, final_center_y))
-	final_imp = final_imp.crop()
-	IJ.run(final_imp, "Rotate 90 Degrees Right", "")
-	IJ.run(final_imp, "Flip Horizontally", "")
-	cropped_max_time_proj = final_imp
-	final_imp.show()
+	cropped_max_time_proj = final_imp.crop()
+	IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Right", "")
+	IJ.run(cropped_max_time_proj, "Flip Horizontally", "")
+	# cropped_max_time_proj = final_imp
+	# final_imp.show()
 	# ui.show(cropped_max_time_proj)
-	print "Finished one template!"
+	# print "Finished one template!"
 	roim.close()
 	table.reset()
 	return (crop_template, cropped_max_time_proj)
 
 
-def crop_stack_by_template(stack, template):
-	return cropped_stack
+def get_polygon_roi_angle(roi):
+	"""Returns an angle between first line in the PolygonRoi and horizontal line
+
+	Args:
+		roi (PolygonRoi): intended for rectangular Rois
+
+	Returns:
+		double: angle between first line in the PolygonRoi and horizontal line
+	"""
+	x1 = roi.getPolygon().xpoints[0]
+	x2 = roi.getPolygon().xpoints[1]
+	y1 = roi.getPolygon().ypoints[0]
+	y2 = roi.getPolygon().ypoints[1]
+	angle = roi.getAngle(x1, y1, x2, y2)
+	return angle
+
+
+def crop_stack_by_template(stack, crop_template, dataset):
+	"""Crop stack by provided PolygonRoi which should be a rotated rectangle around the embryo.
+	It also flips the ebryo accroding to metadata about embryo facing direction, so that illumination is from the left.
+
+	Args:
+		stack (ImagePlus): a stack of image planes
+		crop_template (PolygonRoi): rotated bounding rectangle around the embryo
+		dataset (dict): metadata about the dataset to extract information about embryo orientation
+
+	Returns:
+		ImagePlus: cropped stack
+	"""
+
+	stack.setRoi(crop_template)
+	cropped_stack = stack.crop("stack")
+	stack = None
+	# cropped_stack.show()
+	IJ.run(cropped_stack, "Select All", "")
+
+	IJ.run(cropped_stack, "Rotate... ",
+		"angle=%s grid=1 interpolation=Bilinear stack" % int(round(get_polygon_roi_angle(crop_template))))
+	final_center_x = cropped_stack.getWidth() / 2
+	final_center_y = cropped_stack.getHeight() / 2
+	IJ.run(cropped_stack, "Specify...", "width=1050 height=600 x=%s y=%s centered" %
+	       (final_center_x, final_center_y))
+	cropped_stack_resized = cropped_stack.crop("stack")
+	IJ.run(cropped_stack_resized, "Rotate 90 Degrees Right", "")
+	IJ.run(cropped_stack_resized, "Flip Horizontally", "stack")
+	return cropped_stack_resized
+
 
 
 if __name__ in ['__builtin__', '__main__']:
