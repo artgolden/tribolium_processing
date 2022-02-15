@@ -32,6 +32,8 @@ from fiji.selection import Select_Bounding_Box
 from ij.plugin import RoiRotator
 from ij.plugin import ZProjector
 from ij.io import Opener
+from ij.plugin import Slicer
+import Slice_Keeper
 
 from net.imglib2.view import Views
 
@@ -185,9 +187,17 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			fs = FileSaver(cropped_tstack)
 			fs.saveAsTiff(os.path.join(tstack_dir, cropped_tstack_file_name.get_name()))
 
-			for raw_stack_file_name in get_tiffs_in_directory(raw_dir):
+			planes_kept = (0, 0)
+			for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
 				raw_stack = IJ.openImage(raw_stack_file_name)
+				IJ.run(raw_stack, "Properties...",
+				       "frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 				raw_stack_cropped = crop_stack_by_template(raw_stack, crop_template, dataset)
+				if i == 0:
+					planes_kept = find_planes_to_keep(raw_stack_cropped)
+				# Cleare all of the metadata
+				raw_stack_cropped = reset_img_properties(raw_stack_cropped)
+				raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
 				fs = FileSaver(raw_stack_cropped)
 				fs.saveAsTiff(os.path.join(raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
 
@@ -507,6 +517,90 @@ def crop_stack_by_template(stack, crop_template, dataset):
 	return cropped_stack_resized
 
 
+def find_planes_to_keep(zstack):
+	"""Calculates planes to keep, so that the embryo is centered in them.
+
+	Args:
+		zstack (ImagePlus): raw cropped Z-stack
+
+	Returns:
+		(int, int): (start_plane, stop_plane) ends have to be included.
+	"""
+	IJ.run(zstack, "Properties...",
+            "pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
+
+	# This does not recalculate the pixel values and does not expand the image.
+	# So later, when we convert to mask, the image will be number_of_planes in height, and not 4*number_of_planes
+	# as would be with the Reslice made from GUI.
+	zstack = Slicer.reslice(Slicer(), zstack)
+
+	# zstack.show()
+	# print zstack.getCalibration()
+	max_proj_reslice = project_a_stack(zstack)
+	# max_proj_reslice.show()
+	ip = max_proj_reslice.getProcessor()
+	# Remove noise by running a median filter
+	# with a radius of 4
+	radius = 4
+	RankFilters().rank(ip, radius, RankFilters.MEDIAN)
+
+	hist = ip.getHistogram()
+	triag_threshold = Auto_Threshold.Mean(hist)
+	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
+	IJ.run(max_proj_reslice, "Convert to Mask", "")
+	# max_proj_reslice.show()
+
+	table = ResultsTable()
+	# Initialise without display (boolean value is ignored)
+	roim = RoiManager(False)
+	MIN_PARTICLE_SIZE = 2000  # pixel ^ 2
+	MAX_PARTICLE_SIZE = float("inf")
+	ParticleAnalyzer.setRoiManager(roim)
+	pa = ParticleAnalyzer(
+            ParticleAnalyzer.ADD_TO_MANAGER,
+            Measurements.RECT,
+            table,
+            MIN_PARTICLE_SIZE,
+            MAX_PARTICLE_SIZE
+        )
+	pa.analyze(max_proj_reslice)
+	box_start = table.getValue("BY", 0)
+	box_width = table.getValue("Height", 0)
+	middle_y = box_start + box_width / 2
+	start_plane = int(round(middle_y - 75))
+	end_plane = int(round(middle_y + 74))
+	return (start_plane, end_plane)
+	
+
+def reset_img_properties(image):
+	depth = 4
+	nslices = image.getNSlices()
+	if nslices == 1:
+		depth = 1
+	IJ.run(image, "Properties...", "channels=1 slices=%s frames=1 unit=pixel pixel_width=1.0000 pixel_height=1.0000 voxel_depth=%s.0000 origin=0,0,0" % (nslices, depth))
+
+	# Equivalent of "Remove Slice Labels"
+	stack = image.getStack()
+	size = image.getStackSize()
+	for i in range(1, size + 1):
+		stack.setSliceLabel(None, i)
+	if size == 1:
+		image.setProperty("Label", None)
+
+	return image
+
+
+def subset_planes(zstack, planes):
+
+
+	stack = zstack.getStack()
+	cropped_stack = ImageStack(stack.getWidth(), stack.getHeight())
+	for i in range(planes[0], planes[1] + 1):
+		ip = stack.getProcessor(i)
+		cropped_stack.addSlice(ip)
+	zstack.setStack(cropped_stack)
+
+	return zstack
 
 if __name__ in ['__builtin__', '__main__']:
 	# process_datasets("/home/tema/work/for_Mashunja/fiji_scripts/tmp/test_dir/",
