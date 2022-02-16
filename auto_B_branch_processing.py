@@ -621,5 +621,20 @@ def subset_planes(stack_img, planes):
 	return stack_img
 
 
+def auto_contrast(image):
+	ip = image.getProcessor()
+	hist = ip.getHistogram()
+	triag_threshold = Auto_Threshold.Triangle(hist)
+	num_overexposed_pixels = 0
+	upper_threshold = 10000
+	for i, num_pixels_with_this_value in reversed(list(enumerate(hist))):
+		num_overexposed_pixels += num_pixels_with_this_value
+		if num_overexposed_pixels > 100:
+			upper_threshold = i
+			break
+	image.setDisplayRange(triag_threshold, upper_threshold)
+	IJ.run(image, "Apply LUT", "")
+	return image
+
 if __name__ in ['__builtin__', '__main__']:
 	process_datasets(datasets_dir, metadata_file, dataset_name_prefix)
