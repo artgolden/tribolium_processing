@@ -14,7 +14,7 @@ from datetime import datetime
 
 from java.io import File
 from ij.io import FileSaver
-from ij import IJ, ImagePlus, ImageStack
+from ij import IJ, ImagePlus, ImageStack, WindowManager
 from ij.plugin.filter import RankFilters  
 from fiji.threshold import Auto_Threshold
 from ij.plugin.filter import ParticleAnalyzer 
@@ -26,30 +26,36 @@ from ij.plugin import RoiRotator
 from ij.plugin import ZProjector
 from ij.plugin import Slicer
 
+#TODO:
+# - Create switching of different size bounding boxes based on embryo size
+# - Discuss and do channel handling
+# - Discuss how to do brightness/contrast adjustment for visualization images
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
 {
-	"datasets": [
-		{
-			"ID": 1,
-			"specimens_for_directions_1234": [
-				5,
-				6,
-				4,
-				7
-			]
-		},
-		{
-			"ID": 3,
-			"specimens_for_directions_1234": [
-				0,
-				1,
-				2,
-				3
-			]
-		}
-	]
+    "datasets": [
+        {
+            "ID": 1,
+            "specimens_for_directions_1234": [
+                5,
+                6,
+                4,
+                7
+            ],
+            "head_direction": "right"
+        },
+        {
+            "ID": 3,
+            "specimens_for_directions_1234": [
+                0,
+                1,
+                2,
+                3
+            ],
+            "head_direction": "right"
+        }
+    ]
 }"""
 
 METADATA_DIR_NAME = "(B1)-Metadata"
@@ -136,6 +142,11 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				specimens, dataset_id))
 			print(EXAMPLE_JSON_METADATA_FILE)
 			continue
+		if not dataset["head_direction"] in ["right", "left"]:
+			print("Error while parsing .json file: not a valid head_direction \"%s\" for the dataset with ID: \"%s\" skipping." % (
+				dataset["head_direction"], dataset_id))
+			print(EXAMPLE_JSON_METADATA_FILE)
+			continue
 
 		raw_images_dir = get_raw_images_dir(datasets_dir, dataset_id)
 		if not raw_images_dir:
@@ -187,7 +198,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				       "frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 				raw_stack_cropped = crop_stack_by_template(raw_stack, crop_template, dataset)
 				if i == 0:
-					planes_kept = find_planes_to_keep(raw_stack_cropped)
+					planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
 				# Cleare all of the metadata
 				raw_stack_cropped = reset_img_properties(raw_stack_cropped)
 				raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
@@ -366,6 +377,7 @@ def make_max_Z_projections_for_folder(input_dir, output_dir):
 	for slice in stack_list:
 		max_proj_stack.addSlice(None, slice)
 	max_proj_stack = ImagePlus("max_proj", max_proj_stack)
+	max_proj_stack = reset_img_properties(max_proj_stack)
 	fs = FileSaver(max_proj_stack)
 	fs.saveAsTiff( os.path.join(output_dir, tstack_name.get_name()))
 	return max_proj_stack
@@ -384,9 +396,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 		cropped_max_time_proj (ImagePlus): cropped max time projection
 	"""
 	IJ.run("Clear Results")
-	#TODO:
-	# - Rotate an image based on a parameter in JSON file 
-	# - Create switching of different size bounding boxes based on embryo size
+
 	imp = max_time_projection
 	ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
 
@@ -440,7 +450,8 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
             (final_center_x, final_center_y))
 	cropped_max_time_proj = final_imp.crop()
 	IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Right", "")
-	IJ.run(cropped_max_time_proj, "Flip Horizontally", "")
+	if dataset["head_direction"] == "right":
+		IJ.run(cropped_max_time_proj, "Flip Horizontally", "")
 	roim.close()
 	table.reset()
 	return (crop_template, cropped_max_time_proj)
@@ -490,15 +501,18 @@ def crop_stack_by_template(stack, crop_template, dataset):
 	       (final_center_x, final_center_y))
 	cropped_stack_resized = cropped_stack.crop("stack")
 	IJ.run(cropped_stack_resized, "Rotate 90 Degrees Right", "")
-	IJ.run(cropped_stack_resized, "Flip Horizontally", "stack")
+	if dataset["head_direction"] == "right":
+		IJ.run(cropped_stack_resized, "Flip Horizontally", "stack")
 	return cropped_stack_resized
 
 
-def find_planes_to_keep(zstack):
-	"""Calculates planes to keep, so that the embryo is centered in them.
+def find_planes_to_keep(zstack, meta_dir):
+	"""Calculates planes to keep, so that the embryo is centered in them. 
+	Saves a cropped Y_projected stack for user assessment in the metadata directory. 
 
 	Args:
 		zstack (ImagePlus): cropped Z-stack
+		meta_dir (str): absolute path to metadata directory to save the Y-max projection of the image for the user to asses the plane selection 
 
 	Returns:
 		(int, int): (start_plane, stop_plane) ends have to be included.
@@ -506,12 +520,14 @@ def find_planes_to_keep(zstack):
 	IJ.run(zstack, "Properties...",
             "pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 
-	# This does not recalculate the pixel values and does not expand the image.
+	# This variant of implementation does not recalculate the pixel values and does not expand the image.
 	# So later, when we convert to mask, the image will be number_of_planes in height, and not 4*number_of_planes
 	# as would be with the Reslice made from GUI.
-	zstack = Slicer.reslice(Slicer(), zstack)
+	# This does not account for voxel_depth, so the resliced image is not rectangular.
+	for_user_asessment = zstack.duplicate()
+	resliced = Slicer.reslice(Slicer(), zstack)
 
-	max_proj_reslice = project_a_stack(zstack)
+	max_proj_reslice = project_a_stack(resliced)
 	ip = max_proj_reslice.getProcessor()
 	radius = 4
 	RankFilters().rank(ip, radius, RankFilters.MEDIAN)
@@ -540,6 +556,21 @@ def find_planes_to_keep(zstack):
 	middle_y = box_start + box_width / 2
 	start_plane = int(round(middle_y - 75))
 	end_plane = int(round(middle_y + 74))
+
+	# Save cropped Y-projection for user assessment
+	for_user_asessment = subset_planes(
+		for_user_asessment, (start_plane, end_plane))
+
+	#TODO: Find how to make this headless
+	IJ.run(for_user_asessment, "Reslice [/]...", "output=1 start=Top")
+	for_user_asessment = WindowManager.getCurrentImage()
+	for_user_asessment.hide()
+
+	for_user_asessment = project_a_stack(for_user_asessment)
+	fs = FileSaver(for_user_asessment)
+	fs.saveAsTiff(os.path.join(meta_dir, "Y_projected_raw_stack_for_asessment_of_plane_selection.tif"))
+
+
 	return (start_plane, end_plane)
 	
 
@@ -559,7 +590,7 @@ def reset_img_properties(image):
 	IJ.run(image, "Properties...", "channels=1 slices=%s frames=1 unit=pixel pixel_width=1.0000 pixel_height=1.0000 voxel_depth=%s.0000 origin=0,0,0" % (nslices, depth))
 
 	# Equivalent of "Remove Slice Labels" I had to do it manually because
-	# "Remove Slice Labels" function always displays the image
+	# "Remove Slice Labels" function always displays the output image
 	stack = image.getStack()
 	size = image.getStackSize()
 	for i in range(1, size + 1):
@@ -588,6 +619,7 @@ def subset_planes(stack_img, planes):
 		cropped_stack.addSlice(ip)
 	stack_img.setStack(cropped_stack)
 	return stack_img
+
 
 if __name__ in ['__builtin__', '__main__']:
 	process_datasets(datasets_dir, metadata_file, dataset_name_prefix)
