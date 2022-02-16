@@ -1,14 +1,9 @@
 # @ File(label='Choose a directory with datasets', style='directory') datasets_dir
 # @ File(label='Choose a file with metadata about embryo directions', style='file') metadata_file
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
-#@ DatasetService ds
-#@ DatasetIOService io
-#@ OpService ops
-#@ UIService ui
-#@ ImageJ ij
-#@ ConvertService convert
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
+# Last manual update of this line 2022.2.16 :) 
 
 import os
 import re
@@ -19,7 +14,6 @@ from datetime import datetime
 
 from java.io import File
 from ij.io import FileSaver
-from ij.io import OpenDialog
 from ij import IJ, ImagePlus, ImageStack
 from ij.plugin.filter import RankFilters  
 from fiji.threshold import Auto_Threshold
@@ -28,18 +22,10 @@ from ij.measure import ResultsTable
 from ij.measure import Measurements
 from ij.plugin.frame import RoiManager
 from ij.process import ImageProcessor
-from fiji.selection import Select_Bounding_Box
 from ij.plugin import RoiRotator
 from ij.plugin import ZProjector
-from ij.io import Opener
 from ij.plugin import Slicer
-import Slice_Keeper
 
-from net.imglib2.view import Views
-
-from net.imagej.ops import Ops
-from net.imagej.axis import Axes
-from net.imagej import Dataset
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -107,7 +93,14 @@ class FredericFile:
 
 
 def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
-	# Converting a File object to a string.
+	"""Main function for processing the datasets.
+
+	Args:
+		datasets_dir (java.io.File): directory with subdirectories for each dataset	(input from the user)
+		metadata_file (java.io.File): JSON file with metadata for each dataset (input from the user)
+		dataset_name_prefix (str): Prefix that will be added to all image files for all datasets (input from the user)
+	"""
+	# Converting a Java File object to a string.
 	if isinstance(metadata_file, File):
 		metadata_file = metadata_file.getAbsolutePath()
 	if isinstance(datasets_dir, File):
@@ -201,9 +194,6 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				fs = FileSaver(raw_stack_cropped)
 				fs.saveAsTiff(os.path.join(raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
 
-		# for loop for direction cropping
-			# crop_direction(dataset, raw_images_dir, crop_template)
-
 
 def get_raw_images_dir(datasets_dir, dataset_id):
 	dirs = [name for name in os.listdir(
@@ -223,6 +213,7 @@ def get_raw_images_dir(datasets_dir, dataset_id):
 		      (RAW_IMAGES_DIR_NAME, dataset_id))
 		return None
 	return raw_images_dir
+
 
 def make_directions_dirs(input_dir):
 	direction_dirs = []
@@ -248,6 +239,19 @@ def get_tiff_name_from_dir(input_dir):
 
 
 def move_files(raw_images_dir, specimens_per_direction, dataset_id, dataset_name_prefix):
+	"""Splits the embryo images by direction and puts in separate direction folders. 
+	Renames the files to conform to FredericFile format.
+
+	Args:
+		raw_images_dir (str): full path to mixed raw images files
+		specimens_per_direction (int[]): list of correspondance between specimen number and the direction of the ebryo in this specimen. 
+		Directions are indexes in the speciments_per_direction list + 1
+		dataset_id (int): ID number of the dataset
+		dataset_name_prefix (str): prefix that the user specifies for the dataset
+
+	Raises:
+		Exception: metadata does not contain the specimen extracted from the file names
+	"""
 	direction_dirs = make_directions_dirs(raw_images_dir)
 
 	for file_name in os.listdir(raw_images_dir):
@@ -298,33 +302,18 @@ def is_dataset_ID_input_valid(dataset_id):
 	return False
 
 
-# def crop_direction(dataset_meta, raw_images_dir, crop_template):
-	
-# 	raw_images_direction_dirs = make_directions_dirs(raw_images_dir)
-# 	root_dataset_dir = os.path.split(raw_images_dir)[0]
-# 	tstack_dataset_dirs = make_directions_dirs(
-# 		os.path.join(root_dataset_dir, "(B3)-TStacks-ZM"))
-# 	for raw_dir, tstack_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs):
-# 		cropped_raw_zstacks_dir = #B2
-# 		metadata_dir = #B1 + direction
-
-# 		if does_crop_finished_file_exist(metadata_dir):
-# 			continue
-
-# 		max_proj_stack = make_max_Z_projections_for_folder(raw_images_direction_dir)
-# 		save(max_proj_stack, tstack_dir+backup_subdir)
-# 		max_time_projection = make_max_time_projection(max_proj_stack)
-# 		crop_template, cropped_max_time_projection = create_crop_template(max_time_projection)
-# 		save(crop_template, metadata_dir)
-# 		save(cropped_max_time_projection, metadata_dir)
-# 		cropped_max_projections_stack = crop_stack_by_template(max_time_projection, crop_template)
-# 		save(cropped_max_projections_stack, tstack_dir)
-# 		crop_many_stacks(raw_images_direction_dir, cropped_raw_zstacks_dir, crop_template)
-# 		first_raw_cropped_zstack =  # first zstack from cropped_raw_zstacks_dir
-# 		middle_plane = get_embryo_middle_plane(first_raw_cropped_zstack)
-# 		subset_ebryo_planes(middle_plane, cropped_raw_zstacks_dir)
-
 def get_tiffs_in_directory(directory):
+	"""Get all TIFF file paths in a directory. Subdirectories are not searched.
+
+	Args:
+		directory (str): full path to directory
+
+	Raises:
+		Exception: If no images were found
+
+	Returns:
+		str[]: list of full paths to tiff files
+	"""
 	file_names = []
 	for fname in os.listdir(directory):
 		if fname.lower().endswith(".tif"):
@@ -399,21 +388,16 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 	# - Rotate an image based on a parameter in JSON file 
 	# - Create switching of different size bounding boxes based on embryo size
 	imp = max_time_projection
-	# imp.show()
 	ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
 
 	imp2 = ImagePlus("mask", ip)
-	# Remove noise by running a median filter
-	# with a radius of 4
 	radius = 4
 	RankFilters().rank(ip, radius, RankFilters.MEDIAN)
 
 	hist = ip.getHistogram()
 	triag_threshold = Auto_Threshold.Triangle(hist)
 	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
-	#ip.createMask()
 	IJ.run(imp2, "Convert to Mask", "")
-	# imp2.show()
 	table = ResultsTable()
 	roim = RoiManager(False)  # Initialise without display (boolean value is ignored)
 	MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
@@ -428,16 +412,13 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
         )
 	pa.analyze(imp2)
 	rot_angle = round(table.getValue("Angle", 0))
-	# print rot_angle
 	roi_arr = roim.getRoisAsArray()
 	roim.runCommand('reset')
 	imp.setRoi(roi_arr[len(roi_arr) - 1])
 	IJ.run(imp, "Select Bounding Box (guess background color)", "")
 	bounding_roi = imp.getRoi()
-	# print bounding_roi.getRotationCenter().getBounds()
 	bounding_center_x = bounding_roi.getContourCentroid()[0]
 	bounding_center_y = bounding_roi.getContourCentroid()[1]
-	
 	IJ.run(imp, "Specify...", "width=1050 height=600 x=%s y=%s centered" %
 	       (bounding_center_x, bounding_center_y))
 	roim.runCommand('reset')
@@ -445,11 +426,11 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
 	imp.setRoi(bounding_roi_rot, True)
 	crop_template = imp.getRoi()
-	# imp.show()
 	roim.addRoi(crop_template)
 	roim.select(0)
 	roim.runCommand("Save", os.path.join(meta_dir, "crop_template.roi"))
-	final_imp = imp.crop()
+	final_imp = imp.crop() # This crops by a unrotated bounding box created around the rotated selection box
+						   # so later, when we rotate and crop again there will be no blacked corners in the image.
 	IJ.run(final_imp, "Select All", "")
 	IJ.run(final_imp, "Rotate... ",
 	       "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
@@ -460,10 +441,6 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 	cropped_max_time_proj = final_imp.crop()
 	IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Right", "")
 	IJ.run(cropped_max_time_proj, "Flip Horizontally", "")
-	# cropped_max_time_proj = final_imp
-	# final_imp.show()
-	# ui.show(cropped_max_time_proj)
-	# print "Finished one template!"
 	roim.close()
 	table.reset()
 	return (crop_template, cropped_max_time_proj)
@@ -521,7 +498,7 @@ def find_planes_to_keep(zstack):
 	"""Calculates planes to keep, so that the embryo is centered in them.
 
 	Args:
-		zstack (ImagePlus): raw cropped Z-stack
+		zstack (ImagePlus): cropped Z-stack
 
 	Returns:
 		(int, int): (start_plane, stop_plane) ends have to be included.
@@ -534,13 +511,8 @@ def find_planes_to_keep(zstack):
 	# as would be with the Reslice made from GUI.
 	zstack = Slicer.reslice(Slicer(), zstack)
 
-	# zstack.show()
-	# print zstack.getCalibration()
 	max_proj_reslice = project_a_stack(zstack)
-	# max_proj_reslice.show()
 	ip = max_proj_reslice.getProcessor()
-	# Remove noise by running a median filter
-	# with a radius of 4
 	radius = 4
 	RankFilters().rank(ip, radius, RankFilters.MEDIAN)
 
@@ -548,10 +520,9 @@ def find_planes_to_keep(zstack):
 	triag_threshold = Auto_Threshold.Mean(hist)
 	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
 	IJ.run(max_proj_reslice, "Convert to Mask", "")
-	# max_proj_reslice.show()
 
 	table = ResultsTable()
-	# Initialise without display (boolean value is ignored)
+	# Initialise RoiManager without display (boolean value is ignored)
 	roim = RoiManager(False)
 	MIN_PARTICLE_SIZE = 2000  # pixel ^ 2
 	MAX_PARTICLE_SIZE = float("inf")
@@ -573,13 +544,22 @@ def find_planes_to_keep(zstack):
 	
 
 def reset_img_properties(image):
+	"""Reset properties for an ImagePlus image and remove slice lables
+
+	Args:
+		image (ImagePlus): input image
+
+	Returns:
+		ImagePlus: image with reset properties
+	"""
 	depth = 4
 	nslices = image.getNSlices()
 	if nslices == 1:
 		depth = 1
 	IJ.run(image, "Properties...", "channels=1 slices=%s frames=1 unit=pixel pixel_width=1.0000 pixel_height=1.0000 voxel_depth=%s.0000 origin=0,0,0" % (nslices, depth))
 
-	# Equivalent of "Remove Slice Labels"
+	# Equivalent of "Remove Slice Labels" I had to do it manually because
+	# "Remove Slice Labels" function always displays the image
 	stack = image.getStack()
 	size = image.getStackSize()
 	for i in range(1, size + 1):
@@ -590,20 +570,24 @@ def reset_img_properties(image):
 	return image
 
 
-def subset_planes(zstack, planes):
+def subset_planes(stack_img, planes):
+	"""Leave only specified planes in zstack
 
+	Args:
+		zstack (ImagePlus): stack to crop
+		planes (int, int): (start_plane, end_plane) ends included in the output stack
 
-	stack = zstack.getStack()
+	Returns:
+		ImagePlus: cropped stack
+	"""
+	# I had to do it manually because the built in function (Keep slices) always displays the image
+	stack = stack_img.getStack()
 	cropped_stack = ImageStack(stack.getWidth(), stack.getHeight())
 	for i in range(planes[0], planes[1] + 1):
 		ip = stack.getProcessor(i)
 		cropped_stack.addSlice(ip)
-	zstack.setStack(cropped_stack)
-
-	return zstack
+	stack_img.setStack(cropped_stack)
+	return stack_img
 
 if __name__ in ['__builtin__', '__main__']:
-	# process_datasets("/home/tema/work/for_Mashunja/fiji_scripts/tmp/test_dir/",
-	# 						 "/home/tema/work/for_Mashunja/fiji_scripts/tmp/directions.json",
-	# 						 dataset_name_prefix="MGolden2022A-")
 	process_datasets(datasets_dir, metadata_file, dataset_name_prefix)
