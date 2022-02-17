@@ -5,6 +5,7 @@
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 # Last manual update of this line 2022.2.16 :) 
 
+from distutils.dir_util import mkpath
 import os
 import re
 import fnmatch
@@ -28,8 +29,8 @@ from ij.plugin import Slicer
 
 #TODO:
 # - Create switching of different size bounding boxes based on embryo size
-# - Discuss and do channel handling
-# - Discuss how to do brightness/contrast adjustment for visualization images
+
+
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -37,23 +38,37 @@ Example JSON metadata file contents:
     "datasets": [
         {
             "ID": 1,
-            "specimens_for_directions_1234": [
+            "channel_1": {
+                "specimens_for_directions_1234": [
                 5,
                 6,
                 4,
                 7
-            ],
-            "head_direction": "right"
+                ]                
+            },
+            "head_direction": "right",
+            "use_manual_bounding_box": false
         },
         {
             "ID": 3,
-            "specimens_for_directions_1234": [
-                0,
-                1,
-                2,
-                3
-            ],
-            "head_direction": "right"
+            "channel_1": {
+                "specimens_for_directions_1234": [
+                    5,
+                    6,
+                    4,
+                    7
+                ]
+            },
+            "channel_2": {
+                "specimens_for_directions_1234": [
+                    0,
+                    2,
+                    1,
+                    3
+                ]
+            },
+            "head_direction": "left",
+            "use_manual_bounding_box": false
         }
     ]
 }"""
@@ -129,81 +144,126 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 						datefmt='%d-%b-%y %H:%M:%S',
 						level=logging.INFO)
 
+	# Check metadata file for correctness
 	for dataset in datasets_meta["datasets"]:
+		if "ID" not in dataset:
+			print("Error while parsing .json file. Did not find a dataset ID for one of the datsets. Exiting.")
+			exit(1)
 		dataset_id = dataset["ID"]
-		specimens = dataset["specimens_for_directions_1234"]
+		if "head_direction" not in dataset:
+			print("Error while parsing .json file: no head_direction for the dataset with ID: \"%s\". Exiting." % dataset_id)
+			print(EXAMPLE_JSON_METADATA_FILE)
+			exit(1)
+		specimen_directions_in_channels = []
+		for chan in range(3):
+			channel = "channel_%s" % chan
+			if channel in dataset:
+				if "specimens_for_directions_1234" not in dataset[channel]:
+					print("Error while parsing .json file: no specimens_for_directions_1234 field in channel_%s for the dataset with ID: \"%s\". Exiting." % (channel, dataset_id))
+					print(EXAMPLE_JSON_METADATA_FILE)
+					exit(1)
+				specimen_directions_in_channels.append(
+					tuple(dataset[channel]["specimens_for_directions_1234"]))
+		specimen_directions_in_channels = tuple(specimen_directions_in_channels)
 
 		if not is_dataset_ID_input_valid(dataset_id):
-			print("Error while parsing .json file: not a valid dataset ID: \"%s\" skipping. Dataset ID should be an integer from 0 to 9999." % dataset_id)
+			print("Error while parsing .json file: not a valid dataset ID: \"%s\". Dataset ID should be an integer from 0 to 9999. Exiting." % dataset_id)
 			print(EXAMPLE_JSON_METADATA_FILE)
-			continue
-		if not is_specimen_input_valid(specimens):
-			print("Error while parsing .json file: not a valid specimen list \"%s\" for the dataset with ID: \"%s\" skipping." % (
-				specimens, dataset_id))
-			print(EXAMPLE_JSON_METADATA_FILE)
-			continue
+			exit(1)
+		for specimens in specimen_directions_in_channels:
+			if not is_specimen_input_valid(specimens):
+				print("Error while parsing .json file: not a valid specimen list \"%s\" for the dataset with ID: \"%s\". Exiting." % (
+					specimens, dataset_id))
+				print(EXAMPLE_JSON_METADATA_FILE)
+				exit(1)
 		if not dataset["head_direction"] in ["right", "left"]:
-			print("Error while parsing .json file: not a valid head_direction \"%s\" for the dataset with ID: \"%s\" skipping." % (
+			print("Error while parsing .json file: not a valid head_direction \"%s\" for the dataset with ID: \"%s\". Exiting." % (
 				dataset["head_direction"], dataset_id))
 			print(EXAMPLE_JSON_METADATA_FILE)
-			continue
-
+			exit(1)
+		if specimen_directions_in_channels == ():
+			print("Error while parsing .json file: no channels found for the dataset with ID: \"%s\". Exiting." % dataset_id)
+			print(EXAMPLE_JSON_METADATA_FILE)
+			exit(1)
 		raw_images_dir = get_raw_images_dir(datasets_dir, dataset_id)
 		if not raw_images_dir:
+			print("Exiting.")
+			exit(1)
+		
+			
+
+	for dataset in datasets_meta["datasets"]:
+		dataset_id = dataset["ID"]
+		specimen_directions_in_channels = []
+		for chan in range(3):
+			channel = "channel_%s" % chan
+			if channel in dataset:
+				specimen_directions_in_channels.append(
+					tuple(dataset[channel]["specimens_for_directions_1234"]))
+		specimen_directions_in_channels = tuple(specimen_directions_in_channels)
+
+		logging.info("Started processing dataset: DS%04d" % dataset_id)
+		raw_images_dir = get_raw_images_dir(datasets_dir, dataset_id)
+	
+		logging.info("	Arranging raw image files")
+		try:
+			move_files(
+				raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix)
+		except ValueError as e:
+			print("Error while moving files for the dataset:\"%s\", skipping the dataset." % dataset_id)
+			print(e)
 			continue
-		move_files(
-			raw_images_dir, specimens, dataset_id, dataset_name_prefix)
-		print("Arranged files for the dataset: DS%04d" % dataset_id)
 
-		raw_images_direction_dirs = make_directions_dirs(raw_images_dir)
-		root_dataset_dir = os.path.split(raw_images_dir)[0]
-		meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
-		meta_d_dirs = make_directions_dirs(meta_dir)
-		tstack_dataset_dirs = make_directions_dirs(
-		os.path.join(root_dataset_dir, TSTACKS_DIR_NAME))
-		raw_cropped_dirs = make_directions_dirs(
-                    os.path.join(root_dataset_dir, RAW_CROPPED_DIR_NAME))
-		for raw_dir, tstack_dir, m_dir, raw_cropped_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, raw_cropped_dirs):
-			backup_dir = os.path.join(tstack_dir, "uncropped_backup")
-			if not os.path.exists(backup_dir):
-				os.mkdir(backup_dir)
-			max_proj_stack = make_max_Z_projections_for_folder(
-				raw_dir, os.path.join(tstack_dir, "uncropped_backup"))
+		for channel, _ in enumerate(specimen_directions_in_channels, start=1):
+			chan_dir_name = "CH%04d" % channel
+			raw_images_direction_dirs = make_directions_dirs(os.path.join(raw_images_dir, chan_dir_name))
+			root_dataset_dir = os.path.split(raw_images_dir)[0]
+			meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
+			meta_d_dirs = make_directions_dirs(os.path.join(meta_dir, chan_dir_name))
+			tstack_dataset_dirs = make_directions_dirs(
+			os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
+			raw_cropped_dirs = make_directions_dirs(os.path.join(root_dataset_dir, RAW_CROPPED_DIR_NAME, chan_dir_name))
+			
+			for raw_dir, tstack_dir, m_dir, raw_cropped_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, raw_cropped_dirs):
+				backup_dir = os.path.join(tstack_dir, "uncropped_backup")
+				if not os.path.exists(backup_dir):
+					os.mkdir(backup_dir)
+				max_proj_stack = make_max_Z_projections_for_folder(
+					raw_dir, os.path.join(tstack_dir, "uncropped_backup"))
 
-			max_time_proj = project_a_stack(max_proj_stack)
-			max_time_proj_file_name = get_tiff_name_from_dir(
-				os.path.join(tstack_dir, "uncropped_backup"))
-			max_time_proj_file_name.time_point = "(TM)"
-			logging.info("Created max time projection\n" + os.path.join(m_dir, max_time_proj_file_name.get_name()))
-			fs = FileSaver(max_time_proj)
-			fs.saveAsTiff(os.path.join(m_dir, max_time_proj_file_name.get_name()))
+				max_time_proj = project_a_stack(max_proj_stack)
+				max_time_proj_file_name = get_tiff_name_from_dir(
+					os.path.join(tstack_dir, "uncropped_backup"))
+				max_time_proj_file_name.time_point = "(TM)"
+				logging.info("Created max time projection\n" + os.path.join(m_dir, max_time_proj_file_name.get_name()))
+				fs = FileSaver(max_time_proj)
+				fs.saveAsTiff(os.path.join(m_dir, max_time_proj_file_name.get_name()))
 
-			crop_template, cropped_max_time_proj = create_crop_template(max_time_proj, m_dir, dataset)
-			fs = FileSaver(cropped_max_time_proj)
-			fs.saveAsTiff(os.path.join(
-				m_dir, "cropped_max_time_proj.tif"))
+				crop_template, cropped_max_time_proj = create_crop_template(max_time_proj, m_dir, dataset)
+				fs = FileSaver(cropped_max_time_proj)
+				fs.saveAsTiff(os.path.join(
+					m_dir, "cropped_max_time_proj.tif"))
 
-			cropped_tstack_file_name = get_tiff_name_from_dir(
-				raw_dir)
-			cropped_tstack_file_name.time_point = "(TS)"
-			cropped_tstack_file_name.plane = "(ZM)"
-			cropped_tstack = crop_stack_by_template(max_proj_stack, crop_template, dataset)
-			fs = FileSaver(cropped_tstack)
-			fs.saveAsTiff(os.path.join(tstack_dir, cropped_tstack_file_name.get_name()))
+				cropped_tstack_file_name = get_tiff_name_from_dir(
+					raw_dir)
+				cropped_tstack_file_name.time_point = "(TS)"
+				cropped_tstack_file_name.plane = "(ZM)"
+				cropped_tstack = crop_stack_by_template(max_proj_stack, crop_template, dataset)
+				fs = FileSaver(cropped_tstack)
+				fs.saveAsTiff(os.path.join(tstack_dir, cropped_tstack_file_name.get_name()))
 
-			planes_kept = (0, 0)
-			for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
-				raw_stack = IJ.openImage(raw_stack_file_name)
-				IJ.run(raw_stack, "Properties...",
-				       "frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
-				raw_stack_cropped = crop_stack_by_template(raw_stack, crop_template, dataset)
-				if i == 0:
-					planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
-				# Cleare all of the metadata
-				raw_stack_cropped = reset_img_properties(raw_stack_cropped)
-				raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
-				fs = FileSaver(raw_stack_cropped)
-				fs.saveAsTiff(os.path.join(raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
+				planes_kept = (0, 0)
+				for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
+					raw_stack = IJ.openImage(raw_stack_file_name)
+					IJ.run(raw_stack, "Properties...",
+						"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
+					raw_stack_cropped = crop_stack_by_template(raw_stack, crop_template, dataset)
+					if i == 0:
+						planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
+					raw_stack_cropped = reset_img_properties(raw_stack_cropped)
+					raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
+					fs = FileSaver(raw_stack_cropped)
+					fs.saveAsTiff(os.path.join(raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
 
 
 def get_raw_images_dir(datasets_dir, dataset_id):
@@ -212,16 +272,21 @@ def get_raw_images_dir(datasets_dir, dataset_id):
 
 	this_dataset_dir = fnmatch.filter(dirs, "DS%04d*" % dataset_id)
 	if len(this_dataset_dir) > 1:
-		print("Error: there are multiple directories for the dataset with ID: %04d. Skipping it." % dataset_id)
+		error_msg = "	Error: there are multiple directories for the dataset with ID: %04d." % dataset_id
+		logging.info(error_msg)
+		print(error_msg)
 		return None
 	if len(this_dataset_dir) == 0:
-		print("Error: there are no directories for the dataset with ID: %04d. Skipping it." % dataset_id)
+		error_msg = "	Error: there are no directories for the dataset with ID: %04d." % dataset_id
+		logging.info(error_msg)
+		print(error_msg)
 		return None
 	raw_images_dir = os.path.join(
 		datasets_dir, this_dataset_dir[0], RAW_IMAGES_DIR_NAME)
 	if not os.path.isdir(raw_images_dir):
-		print("Error: there are no %s directoriy for the dataset with ID: %04d. Skipping it." %
-		      (RAW_IMAGES_DIR_NAME, dataset_id))
+		error_msg = "	Error: there are no %s directoriy for the dataset with ID: %04d." % (RAW_IMAGES_DIR_NAME, dataset_id)
+		logging.info(error_msg)
+		print(error_msg)
 		return None
 	return raw_images_dir
 
@@ -232,7 +297,8 @@ def make_directions_dirs(input_dir):
 			new_dir = os.path.join(input_dir, "DR" + str(i).zfill(4))
 			direction_dirs.append(new_dir)
 			if not os.path.exists(new_dir):
-				os.mkdir(new_dir)
+				mkpath(new_dir)
+				
 	return direction_dirs
 		
 
@@ -243,27 +309,34 @@ def get_tiff_name_from_dir(input_dir):
 			file_name = fname
 		break
 	if file_name == None:
-		raise Exception("Did not find any TIFF files in a directory.")
+		raise Exception("Did not find any TIFF files in a directory: %s" % input_dir)
 
 	file_name = FredericFile(file_name)
 	return file_name
 
 
-def move_files(raw_images_dir, specimens_per_direction, dataset_id, dataset_name_prefix):
-	"""Splits the embryo images by direction and puts in separate direction folders. 
+def move_files(raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix):
+	"""Splits the embryo images by direction and puts in separate channel/direction folders. 
 	Renames the files to conform to FredericFile format.
 
 	Args:
 		raw_images_dir (str): full path to mixed raw images files
-		specimens_per_direction (int[]): list of correspondance between specimen number and the direction of the ebryo in this specimen. 
-		Directions are indexes in the speciments_per_direction list + 1
+		specimens_per_direction ( ((4,3,2,1),(5,6,8,7)) ): a tuple, each element has info for a channel with this index. 
+		Info is a tuple with correspondance speciment number and directions, where directions are corresponding index in the tuple.
 		dataset_id (int): ID number of the dataset
 		dataset_name_prefix (str): prefix that the user specifies for the dataset
 
 	Raises:
 		Exception: metadata does not contain the specimen extracted from the file names
 	"""
-	direction_dirs = make_directions_dirs(raw_images_dir)
+	specimens_info = {}
+	for channel, directions in enumerate(specimen_directions_in_channels, start=1):
+		chan_dir = os.path.join(raw_images_dir, "CH%04d" % channel)
+		if not os.path.exists(chan_dir):
+			os.mkdir(chan_dir)
+		direction_dirs = make_directions_dirs(chan_dir)
+		for direct, specimen in enumerate(directions, start=1):
+			specimens_info[specimen] = {"channel": channel, "direction": direct}
 
 	for file_name in os.listdir(raw_images_dir):
 		file_path = os.path.join(raw_images_dir, file_name)
@@ -275,18 +348,22 @@ def move_files(raw_images_dir, specimens_per_direction, dataset_id, dataset_name
 
 		specimen = int(
 			file_name[file_name.find("SPC0") + 4: file_name.find("SPC0") + 6])
-
-		if not specimen in specimens_per_direction:
-			raise Exception("In the metadata for the dataset: DS %04d there is no entry for the specimen: %i" % (
-				dataset_id, specimen))
-
-		embryo_direction = specimens_per_direction.index(specimen) + 1
 		time_point = int(
 			file_name[file_name.find("TL") + 2: file_name.find("TL") + 6]) + 1
-		new_file_name = "%sDS%04dTP%04dDR%04dCH0001PL(ZS).tif" % (dataset_name_prefix,
+		# channel = int(file_name[file_name.find("CHN") + 3: file_name.find("TL") + 5]) + 1 # Not used for old mDSLM images
+
+		if specimen not in specimens_info:
+			raise ValueError("In the metadata for the dataset: DS %04d there is no entry for the specimen: %i" % (
+				dataset_id, specimen))
+
+
+		image_channel = specimens_info[specimen]["channel"]
+		embryo_direction = specimens_info[specimen]["direction"]
+		new_file_name = "%sDS%04dTP%04dDR%04dCH%04dPL(ZS).tif" % (dataset_name_prefix,
 																  dataset_id,
 																  time_point,
-																  embryo_direction)
+																  embryo_direction,
+                                                            	  image_channel)
 		os.rename(file_path, os.path.join(
 			direction_dirs[embryo_direction - 1], new_file_name))
 		logging.info("New file \n%s\n Full path:\n%s\n Original name: \n%s\n Original path: \n%s\n" % (new_file_name,
@@ -298,9 +375,10 @@ def move_files(raw_images_dir, specimens_per_direction, dataset_id, dataset_name
 
 
 def is_specimen_input_valid(specimens_per_direction):
-	if not isinstance(specimens_per_direction, list):
+	if not isinstance(specimens_per_direction, tuple):
 		return False
-	if sorted(specimens_per_direction) == [0, 1, 2, 3] or sorted(specimens_per_direction) == [4, 5, 6, 7]:
+	possible_specimens_lists = [[0, 1, 2, 3], [4, 5, 6, 7], [8,9,10,11], [12,13,14,15], [16,17,18,19], [20,21,22,23]]
+	if sorted(list(specimens_per_direction)) in possible_specimens_lists:
 		return True
 	return False
 
@@ -449,9 +527,14 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 	IJ.run(final_imp, "Specify...", "width=1050 height=600 x=%s y=%s centered" %
             (final_center_x, final_center_y))
 	cropped_max_time_proj = final_imp.crop()
-	IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Right", "")
-	if dataset["head_direction"] == "right":
-		IJ.run(cropped_max_time_proj, "Flip Horizontally", "")
+	if dataset["head_direction"] == "left":
+		IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Right", "")
+
+		# So that illumination is comming from the right. 
+		# Right now everything is based on that illumination on the images from mDSLM is always coming from the top.
+		IJ.run(cropped_max_time_proj, "Flip Horizontally", "") 
+	else:
+		IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Left", "")
 	roim.close()
 	table.reset()
 	return (crop_template, cropped_max_time_proj)
@@ -500,9 +583,12 @@ def crop_stack_by_template(stack, crop_template, dataset):
 	IJ.run(cropped_stack, "Specify...", "width=1050 height=600 x=%s y=%s centered" %
 	       (final_center_x, final_center_y))
 	cropped_stack_resized = cropped_stack.crop("stack")
-	IJ.run(cropped_stack_resized, "Rotate 90 Degrees Right", "")
-	if dataset["head_direction"] == "right":
+
+	if dataset["head_direction"] == "left":
+		IJ.run(cropped_stack_resized, "Rotate 90 Degrees Right", "")
 		IJ.run(cropped_stack_resized, "Flip Horizontally", "stack")
+	else:
+		IJ.run(cropped_stack_resized, "Rotate 90 Degrees Left", "")
 	return cropped_stack_resized
 
 
