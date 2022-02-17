@@ -205,7 +205,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		logging.info("Started processing dataset: DS%04d" % dataset_id)
 		raw_images_dir = get_raw_images_dir(datasets_dir, dataset_id)
 	
-		logging.info("	Arranging raw image files")
+		logging.info("\tArranging raw image files")
 		try:
 			move_files(
 				raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix)
@@ -213,6 +213,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			print("Error while moving files for the dataset:\"%s\", skipping the dataset." % dataset_id)
 			print(e)
 			continue
+		logging.info("\tFiles arranged, starting processing.")
 
 		for channel, _ in enumerate(specimen_directions_in_channels, start=1):
 			chan_dir_name = "CH%04d" % channel
@@ -224,26 +225,28 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
 			raw_cropped_dirs = make_directions_dirs(os.path.join(root_dataset_dir, RAW_CROPPED_DIR_NAME, chan_dir_name))
 			
-			for raw_dir, tstack_dir, m_dir, raw_cropped_dir in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, raw_cropped_dirs):
-				backup_dir = os.path.join(tstack_dir, "uncropped_backup")
-				if not os.path.exists(backup_dir):
-					os.mkdir(backup_dir)
-				max_proj_stack = make_max_Z_projections_for_folder(
-					raw_dir, os.path.join(tstack_dir, "uncropped_backup"))
+			for raw_dir, tstack_dir, m_dir, raw_cropped_dir, direction in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, raw_cropped_dirs, range(1,5)):
+				logging.info("\tChannel: %s Direction: %s In the loop over directions. This iteration operating on the following directories:" % (channel, direction))
+				logging.info("\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n" % (raw_dir, tstack_dir, m_dir, raw_cropped_dir))
+				tstack_backup_dir = os.path.join(tstack_dir, "uncropped_backup")
+				if not os.path.exists(tstack_backup_dir):
+					os.mkdir(tstack_backup_dir)
+				logging.info("\tChannel: %s Direction: %s Creating a stack of max Z-projections from raw stack." % (channel, direction))
+				max_proj_stack = make_max_Z_projections_for_folder(raw_dir, tstack_backup_dir)
 
 				max_time_proj = project_a_stack(max_proj_stack)
-				max_time_proj_file_name = get_tiff_name_from_dir(
-					os.path.join(tstack_dir, "uncropped_backup"))
+				max_time_proj_file_name = get_tiff_name_from_dir(tstack_backup_dir)
 				max_time_proj_file_name.time_point = "(TM)"
-				logging.info("Created max time projection\n" + os.path.join(m_dir, max_time_proj_file_name.get_name()))
 				fs = FileSaver(max_time_proj)
 				fs.saveAsTiff(os.path.join(m_dir, max_time_proj_file_name.get_name()))
 
+				logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (channel, direction))
 				crop_template, cropped_max_time_proj = create_crop_template(max_time_proj, m_dir, dataset)
 				fs = FileSaver(cropped_max_time_proj)
 				fs.saveAsTiff(os.path.join(
 					m_dir, "cropped_max_time_proj.tif"))
 
+				logging.info("\tChannel: %s Direction: %s Cropping a stack of max projections." % (channel, direction))
 				cropped_tstack_file_name = get_tiff_name_from_dir(
 					raw_dir)
 				cropped_tstack_file_name.time_point = "(TS)"
@@ -252,6 +255,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				fs = FileSaver(cropped_tstack)
 				fs.saveAsTiff(os.path.join(tstack_dir, cropped_tstack_file_name.get_name()))
 
+				logging.info("\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
 				planes_kept = (0, 0)
 				for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
 					raw_stack = IJ.openImage(raw_stack_file_name)
@@ -259,11 +263,15 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 						"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 					raw_stack_cropped = crop_stack_by_template(raw_stack, crop_template, dataset)
 					if i == 0:
+						logging.info("\tChannel: %s Direction: %s Finding which planes to keep in raw image stacks." % (channel, direction))
 						planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
+						logging.info("\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
 					raw_stack_cropped = reset_img_properties(raw_stack_cropped)
 					raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
 					fs = FileSaver(raw_stack_cropped)
 					fs.saveAsTiff(os.path.join(raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
+		logging.info("Finished processing dataset %04d successfully." % dataset_id)
+	logging.info("Finished processing all datasets.")
 
 
 def get_raw_images_dir(datasets_dir, dataset_id):
