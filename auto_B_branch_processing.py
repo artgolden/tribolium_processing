@@ -27,16 +27,13 @@ from ij.process import ImageProcessor
 from ij.plugin import RoiRotator
 from ij.plugin import ZProjector
 from ij.plugin import Slicer
+from ij.plugin import StackCombiner
 
 #TODO:
-# contrast adjusted images generation
-# Make crop template identical minimal size for all datasets and channels
-# 	run only up to crop template creation, update global max box on the way, do this only for channel 1
-#   check when applying global max box for edge overlap
-#	keep track of the original box width for each direction
-# 	recalculate the crop templates
-#	proceed further with the pipeline
-#	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75)) gives negative values?
+#	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75)) 
+# 	gives negative values? Make a better solution than just shifting the 150 plane crop.
+#
+# - Allow user to specify manual bounding box.
 
 
 
@@ -86,6 +83,8 @@ METADATA_DIR_NAME = "(B1)-Metadata"
 TSTACKS_DIR_NAME = "(B3)-TStacks-ZM"
 RAW_IMAGES_DIR_NAME = "(P0)-ZStacks-Raw"
 RAW_CROPPED_DIR_NAME = "(B2)-ZStacks"
+CONTRAST_DIR_NAME = "(B4)-TStacks-ZN"
+MONTAGE_DIR_NAME = "(B5)-TStacks-ZN-Montage"
 
 DEFAULT_CROP_BOX_WIDTH = 1100
 MINIMUM_CROP_BOX_WIDTH = 1000
@@ -301,12 +300,12 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			root_dataset_dir = os.path.split(raw_images_dir)[0]
 			meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
 			meta_d_dirs = make_directions_dirs(os.path.join(meta_dir, chan_dir_name))
-			tstack_dataset_dirs = make_directions_dirs(
-			os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
+			tstack_dataset_dirs = make_directions_dirs(os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
 			raw_cropped_dirs = make_directions_dirs(os.path.join(root_dataset_dir, RAW_CROPPED_DIR_NAME, chan_dir_name))
-			
+			contrast_dirs = make_directions_dirs(os.path.join(
+				root_dataset_dir, CONTRAST_DIR_NAME, chan_dir_name))
 
-			for raw_dir, tstack_dir, m_dir, raw_cropped_dir, direction in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, raw_cropped_dirs, range(1,5)):
+			for direction, raw_dir, tstack_dir, m_dir, raw_cropped_dir, contr_dir in zip(range(1, 5), raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, raw_cropped_dirs, contrast_dirs):
 				if skip_the_dataset == True:
 					break
 				# if direction > 1: 
@@ -369,6 +368,16 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				fs = FileSaver(cropped_tstack)
 				fs.saveAsTiff(os.path.join(tstack_dir, cropped_tstack_file_name.get_name()))
 
+				logging.info("\tChannel: %s Direction: %s Creating histogram adjusted stacks of max projections." % (
+					channel, direction))
+				cropped_adjusted_tstack = adjust_histogram_stack(cropped_tstack)
+				cropped_adjusted_tstack_name = cropped_tstack_file_name
+				cropped_adjusted_tstack_name.plane = "(ZN)"
+				fs = FileSaver(cropped_adjusted_tstack)
+				fs.saveAsTiff(os.path.join(
+					contr_dir, cropped_adjusted_tstack_name.get_name()))
+
+
 				logging.info("\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
 				planes_kept = (0, 0)
 				for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
@@ -390,6 +399,25 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
 					fs = FileSaver(raw_stack_cropped)
 					fs.saveAsTiff(os.path.join(raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
+			montage_stack = ImagePlus()
+			montage_stack_name = None
+			for i, contr_dir in enumerate(contrast_dirs):
+				stack_path = os.path.join(
+					contr_dir, get_tiff_name_from_dir(contr_dir).get_name())
+				imp_stack = IJ.openImage(stack_path)
+				if i == 0:
+					montage_stack = imp_stack.getStack()
+					montage_stack_name = get_tiff_name_from_dir(contr_dir)
+				if i > 0:
+					montage_stack = StackCombiner.combineHorizontally(StackCombiner(),
+						montage_stack, imp_stack.getStack())
+			montage_stack_name.direction = "(MT)"
+			montage_stack = ImagePlus("montage", montage_stack)
+			fs = FileSaver(montage_stack)
+			fs.saveAsTiff(os.path.join(root_dataset_dir,
+                              MONTAGE_DIR_NAME, montage_stack_name.get_name()))
+				
+
 		if skip_the_dataset == True:
 			logging.info("Had to skip the dataset DS%04d." % dataset_id)
 			continue
@@ -935,14 +963,32 @@ def auto_contrast(image):
 	triag_threshold = Auto_Threshold.Triangle(hist)
 	num_overexposed_pixels = 0
 	upper_threshold = 10000
+	sum_elem_above_threshold = sum(hist[i]
+	                               for i in range(triag_threshold, len(hist)))
+
+	# making it so 1% of all pixels will be overexposed
+	num_overexposed_pixels_threshold = 0.01 * sum_elem_above_threshold
 	for i, num_pixels_with_this_value in reversed(list(enumerate(hist))):
 		num_overexposed_pixels += num_pixels_with_this_value
-		if num_overexposed_pixels > 100:
+		if num_overexposed_pixels > num_overexposed_pixels_threshold:
 			upper_threshold = i
 			break
+	logging.info("Chosen theese values to adjust image histogram, min: %s max: %s" % (triag_threshold, upper_threshold))
 	image.setDisplayRange(triag_threshold, upper_threshold)
 	IJ.run(image, "Apply LUT", "")
-	return image
+
+
+def adjust_histogram_stack(imp_stack):
+	adjusted_stack = []
+	stack = imp_stack.getStack()
+	for i in range(1, imp_stack.getNSlices() + 1):
+		imp2 = ImagePlus("slice_iterator", stack.getProcessor(i))
+		auto_contrast(imp2)
+		adjusted_stack.append(imp2)
+	adjusted_stack = ImagePlus(
+		"Adjusted contrast", ImageStack.create(adjusted_stack))
+	return adjusted_stack
+
 
 if __name__ in ['__builtin__', '__main__']:
 	process_datasets(datasets_dir, metadata_file, dataset_name_prefix)
