@@ -30,6 +30,8 @@ from ij.plugin import Slicer
 
 #TODO:
 # contrast adjusted images generation
+# Make crop template identical minimal size for all datasets and channels
+
 
 
 
@@ -236,7 +238,13 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				if not os.path.exists(tstack_backup_dir):
 					os.mkdir(tstack_backup_dir)
 				logging.info("\tChannel: %s Direction: %s Creating a stack of max Z-projections from raw stack." % (channel, direction))
-				max_proj_stack = make_max_Z_projections_for_folder(raw_dir, tstack_backup_dir)
+				try:
+					max_proj_stack_file = get_tiff_name_from_dir(tstack_backup_dir)
+					max_proj_stack = IJ.openImage(os.path.join(tstack_backup_dir, max_proj_stack_file.get_name()))
+					logging.info("\tChannel: %s Direction: %s Found existing max Z-projections from raw stack. Using them." % (channel, direction))
+				except Exception as e:
+					max_proj_stack = make_max_Z_projections_for_folder(raw_dir, tstack_backup_dir)
+				
 
 				max_time_proj = project_a_stack(max_proj_stack)
 				max_time_proj_file_name = get_tiff_name_from_dir(tstack_backup_dir)
@@ -284,6 +292,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			continue
 		logging.info("Finished processing dataset DS%04d successfully." % dataset_id)
 	logging.info("Finished processing all datasets.")
+	print("Finished processing all datasets.")
 
 
 def get_raw_images_dir(datasets_dir, dataset_id):
@@ -476,10 +485,29 @@ def make_max_Z_projections_for_folder(input_dir, output_dir):
 		max_proj_stack.addSlice(None, slice)
 	max_proj_stack = ImagePlus("max_proj", max_proj_stack)
 	max_proj_stack = reset_img_properties(max_proj_stack)
-	fs = FileSaver(max_proj_stack)
-	fs.saveAsTiff( os.path.join(output_dir, tstack_name.get_name()))
 	return max_proj_stack
 
+
+def is_polygon_roi_overlapping_image_edges(image, roi):
+	"""Check if any of the roi coordinates are outside of the image.
+
+	Args:
+		image (ImagePlus): image to check over
+		roi (PolygonRoi): roi to check
+
+	Returns:
+		bool: is roi overlapping the edges?
+	"""
+	is_overlapping = False
+	if not all(x < image.getWidth() for x in roi.getPolygon().xpoints):
+		is_overlapping = True
+	if not all(x > 0 for x in roi.getPolygon().xpoints):
+		is_overlapping = True
+	if not all(y < image.getHeight() for y in roi.getPolygon().ypoints):
+		is_overlapping = True
+	if not all(y > 0 for y in roi.getPolygon().ypoints):
+		is_overlapping = True
+	return is_overlapping
 
 def create_crop_template(max_time_projection, meta_dir, dataset):
 	"""Crop max_time_projection, create crop template .roi object, save it in meta_dir.
@@ -519,13 +547,15 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
             MAX_PARTICLE_SIZE
         )
 	pa.analyze(imp2)
-	rot_angle = round(table.getValue("Angle", 0))
+	rot_angle = round(table.getValue("Angle", 0), ndigits=1)
 	roi_arr = roim.getRoisAsArray()
 	roim.runCommand('reset')
 	imp.setRoi(roi_arr[len(roi_arr) - 1])
 	IJ.run(imp, "Select Bounding Box (guess background color)", "")
 	bounding_roi = imp.getRoi()
-	box_minimum_width = bounding_roi.getBounds().width # extracting width field from java.awt.Rectangle
+	box_minimum_possible_width = bounding_roi.getBounds().width # extracting width field from java.awt.Rectangle
+	box_minimum_enforced_width = 1000 # We chose to enforse the lower bound
+	box_minimum_width = max(box_minimum_possible_width, box_minimum_enforced_width)
 	bounding_center_x = bounding_roi.getContourCentroid()[0]
 	bounding_center_y = bounding_roi.getContourCentroid()[1]
 	box_width = 1100
@@ -536,17 +566,17 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
 
 	# Check if the rotated bounding box extend over the image
-	if not all(x < imp.getWidth() for x in bounding_roi_rot.getPolygon().xpoints):
+	if is_polygon_roi_overlapping_image_edges(imp, bounding_roi_rot) == True:
 		logging.info(
-			"\tBox of 1100x600 could not be fitted to the embryo without protruding out of the image. Searching for smaller box.")
+			"\tBox of 1100x600 could not be fitted to the embryo without protruding out of the image. Searching for a smaller box.")
 		box_width = 1090
-		while box_width > box_minimum_width:
+		while box_width >= box_minimum_width:
 			imp.deleteRoi()
 			IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
                             (box_width, bounding_center_x, bounding_center_y))
 			bounding_roi = imp.getRoi()
 			bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
-			if all(x < imp.getWidth() for x in bounding_roi_rot.getPolygon().xpoints):
+			if is_polygon_roi_overlapping_image_edges(imp, bounding_roi_rot) == False:
 				logging.info("\tFound a smaller box! Dimensions: %sx600" % box_width)
 				break
 			box_width -= 10
