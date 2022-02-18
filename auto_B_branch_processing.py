@@ -3,7 +3,7 @@
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.2.17 :) 
+# Last manual update of this line 2022.2.18 :) 
 
 from distutils.dir_util import mkpath
 import math
@@ -34,6 +34,8 @@ from ij.plugin import StackCombiner
 # 	gives negative values? Make a better solution than just shifting the 150 plane crop.
 #
 # - Allow user to specify manual bounding box.
+# - Write a tutorial inside the script
+# - create a better way of logging histogram adjustments for stacks.
 
 
 
@@ -787,7 +789,9 @@ def get_rotated_rect_roi_width(roi):
 	y1 = roi.getPolygon().ypoints[0]
 	y2 = roi.getPolygon().ypoints[1]
 	width = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-	width = (width / 10 ) * 10 
+	# logging.info("Determined rectangular roi width before rounding: %s" % width)
+	width = round(width / 10 ) * 10 
+	logging.info("\tRectangular roi width: %s" % width)
 	return width
 
 
