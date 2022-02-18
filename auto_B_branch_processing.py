@@ -31,6 +31,12 @@ from ij.plugin import Slicer
 #TODO:
 # contrast adjusted images generation
 # Make crop template identical minimal size for all datasets and channels
+# 	run only up to crop template creation, update global max box on the way, do this only for channel 1
+#   check when applying global max box for edge overlap
+#	keep track of the original box width for each direction
+# 	recalculate the crop templates
+#	proceed further with the pipeline
+#	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75)) gives negative values?
 
 
 
@@ -80,6 +86,9 @@ METADATA_DIR_NAME = "(B1)-Metadata"
 TSTACKS_DIR_NAME = "(B3)-TStacks-ZM"
 RAW_IMAGES_DIR_NAME = "(P0)-ZStacks-Raw"
 RAW_CROPPED_DIR_NAME = "(B2)-ZStacks"
+
+DEFAULT_CROP_BOX_WIDTH = 1100
+MINIMUM_CROP_BOX_WIDTH = 1000
 
 class FredericFile:
 	"""
@@ -219,6 +228,71 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			continue
 		logging.info("\tFiles arranged, starting processing.")
 
+		# We have to make sure that all directions in all channels have the same crop box dimensions.
+		dataset_maximal_crop_box_width = DEFAULT_CROP_BOX_WIDTH
+		channel = 1
+		chan_dir_name = "CH%04d" % channel
+		raw_images_direction_dirs = make_directions_dirs(
+			os.path.join(raw_images_dir, chan_dir_name))
+		root_dataset_dir = os.path.split(raw_images_dir)[0]
+		meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
+		meta_d_dirs = make_directions_dirs(os.path.join(meta_dir, chan_dir_name))
+		tstack_dataset_dirs = make_directions_dirs(
+						os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
+		raw_cropped_dirs = make_directions_dirs(os.path.join(
+			root_dataset_dir, RAW_CROPPED_DIR_NAME, chan_dir_name))
+		# Loop one time over all dimensions in channel 1 to determine the dataset_maximal_crop_box_width
+		for raw_dir, tstack_dir, m_dir, direction in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, range(1, 5)):
+			logging.info("\tCreating crop templates for all directions in CH0001 to ensure that all crop templates have the same dimensions.")
+			logging.info("\tChannel: %s Direction: %s In the loop over directions. This iteration operating on the following directories:" % (
+				channel, direction))
+			logging.info("\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n" % (raw_dir, tstack_dir, m_dir))
+			
+			
+			tstack_backup_dir = os.path.join(tstack_dir, "uncropped_backup")
+			if not os.path.exists(tstack_backup_dir):
+				os.mkdir(tstack_backup_dir)
+			logging.info("\tChannel: %s Direction: %s Creating a stack of max Z-projections from raw stack." % (channel, direction))
+			mproj_stack_file_name = get_tiff_name_from_dir(raw_dir)
+			mproj_stack_file_name.plane = "(ZM)"
+			mproj_stack_file_name.time_point = "(TS)"
+			mproj_stack_path = os.path.join(
+				tstack_backup_dir, mproj_stack_file_name.get_name())
+			if not os.path.exists(mproj_stack_path):
+				max_proj_stack = make_max_Z_projections_for_folder(raw_dir)
+				fs = FileSaver(max_proj_stack)
+				fs.saveAsTiff(mproj_stack_path)
+			else:
+				max_proj_stack = IJ.openImage(mproj_stack_path)
+				logging.info("\tChannel: %s Direction: %s Found existing max Z-projections. Using them." % (channel, direction))
+
+			max_time_proj_file_name = mproj_stack_file_name
+			max_time_proj_file_name.time_point = "(TM)"
+			max_time_proj_full_path = os.path.join(m_dir, max_time_proj_file_name.get_name())
+			if not os.path.exists(max_time_proj_full_path):
+				max_time_proj = project_a_stack(max_proj_stack)
+				fs = FileSaver(max_time_proj)
+				fs.saveAsTiff(max_time_proj_full_path)
+			else:
+				logging.info(
+					"\tChannel: %s Direction: %s Found existing max TIME-projection, using it. \n\t\t\t\t\t%s" % (channel, direction, max_time_proj_full_path))
+				max_time_proj = IJ.openImage(max_time_proj_full_path)
+
+			logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (
+				channel, direction))
+			try:
+				crop_template, cropped_max_time_proj, dataset_maximal_crop_box_width = create_crop_template(
+					max_time_proj, m_dir, dataset, dataset_maximal_crop_box_width, use_dataset_box_width=False)
+			except Exception as e:
+				logging.info(
+					"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
+				skip_the_dataset = True
+				break
+			fs = FileSaver(cropped_max_time_proj)
+			fs.saveAsTiff(os.path.join(
+				m_dir, "cropped_max_time_proj.tif"))
+
+		# Main loop over the channels and directions for the dataset		
 		for channel, _ in enumerate(specimen_directions_in_channels, start=1):
 			if skip_the_dataset == True:
 				break
@@ -231,30 +305,53 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
 			raw_cropped_dirs = make_directions_dirs(os.path.join(root_dataset_dir, RAW_CROPPED_DIR_NAME, chan_dir_name))
 			
+
 			for raw_dir, tstack_dir, m_dir, raw_cropped_dir, direction in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, raw_cropped_dirs, range(1,5)):
+				if skip_the_dataset == True:
+					break
+				# if direction > 1: 
+				# 	print "Skipping all other directions for testing"
+				# 	break
 				logging.info("\tChannel: %s Direction: %s In the loop over directions. This iteration operating on the following directories:" % (channel, direction))
 				logging.info("\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n" % (raw_dir, tstack_dir, m_dir, raw_cropped_dir))
 				tstack_backup_dir = os.path.join(tstack_dir, "uncropped_backup")
+
+
 				if not os.path.exists(tstack_backup_dir):
 					os.mkdir(tstack_backup_dir)
 				logging.info("\tChannel: %s Direction: %s Creating a stack of max Z-projections from raw stack." % (channel, direction))
-				try:
-					max_proj_stack_file = get_tiff_name_from_dir(tstack_backup_dir)
-					max_proj_stack = IJ.openImage(os.path.join(tstack_backup_dir, max_proj_stack_file.get_name()))
-					logging.info("\tChannel: %s Direction: %s Found existing max Z-projections from raw stack. Using them." % (channel, direction))
-				except Exception as e:
-					max_proj_stack = make_max_Z_projections_for_folder(raw_dir, tstack_backup_dir)
-				
+				mproj_stack_file_name = get_tiff_name_from_dir(raw_dir)
+				mproj_stack_file_name.plane = "(ZM)"
+				mproj_stack_file_name.time_point = "(TS)"
+				mproj_stack_path = os.path.join(
+					tstack_backup_dir, mproj_stack_file_name.get_name())
+				if not os.path.exists(mproj_stack_path):
+					max_proj_stack = make_max_Z_projections_for_folder(raw_dir)
+					fs = FileSaver(max_proj_stack)
+					fs.saveAsTiff(mproj_stack_path)
+				else:
+					max_proj_stack = IJ.openImage(mproj_stack_path)
+					logging.info("\tChannel: %s Direction: %s Found existing max Z-projections. Using them." % (channel, direction))
 
-				max_time_proj = project_a_stack(max_proj_stack)
-				max_time_proj_file_name = get_tiff_name_from_dir(tstack_backup_dir)
+
+
+				max_time_proj_file_name = mproj_stack_file_name
 				max_time_proj_file_name.time_point = "(TM)"
-				fs = FileSaver(max_time_proj)
-				fs.saveAsTiff(os.path.join(m_dir, max_time_proj_file_name.get_name()))
+				max_time_proj_full_path = os.path.join(
+					m_dir, max_time_proj_file_name.get_name())
+				if not os.path.exists(max_time_proj_full_path):
+					max_time_proj = project_a_stack(max_proj_stack)
+					fs = FileSaver(max_time_proj)
+					fs.saveAsTiff(max_time_proj_full_path)
+				else:
+					logging.info(
+						"\tChannel: %s Direction: %s Found existing max TIME-projection, using it. \n\t\t\t\t\t%s" % (channel, direction, max_time_proj_full_path))
+					max_time_proj = IJ.openImage(max_time_proj_full_path)
 
 				logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (channel, direction))
 				try:
-					crop_template, cropped_max_time_proj = create_crop_template(max_time_proj, m_dir, dataset)
+					crop_template, cropped_max_time_proj, dataset_maximal_crop_box_width = create_crop_template(
+						max_time_proj, m_dir, dataset, dataset_maximal_crop_box_width, use_dataset_box_width=True)
 				except Exception as e:
 					logging.info("ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 					skip_the_dataset = True
@@ -281,14 +378,20 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					raw_stack_cropped = crop_stack_by_template(raw_stack, crop_template, dataset)
 					if i == 0:
 						logging.info("\tChannel: %s Direction: %s Finding which planes to keep in raw image stacks." % (channel, direction))
-						planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
-						logging.info("\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
+						try:
+							planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
+						except Exception as e:
+							logging.info("\tChannel: %s Direction: Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
+								channel, direction, e))
+							skip_the_dataset = True
+							break
+						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." % (channel, direction, planes_kept))
 					raw_stack_cropped = reset_img_properties(raw_stack_cropped)
 					raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
 					fs = FileSaver(raw_stack_cropped)
 					fs.saveAsTiff(os.path.join(raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
 		if skip_the_dataset == True:
-			logging.info("Had to skip the dataset %04d." % dataset_id)
+			logging.info("Had to skip the dataset DS%04d." % dataset_id)
 			continue
 		logging.info("Finished processing dataset DS%04d successfully." % dataset_id)
 	logging.info("Finished processing all datasets.")
@@ -458,7 +561,7 @@ def project_a_stack(stack):
 	return zpimp
 
 
-def make_max_Z_projections_for_folder(input_dir, output_dir):
+def make_max_Z_projections_for_folder(input_dir):
 	"""Takes all stacks from a directory, does their max-projection, makes a stack of max-projections, saves it to output directory and returns it. 
 
 	Args:
@@ -477,9 +580,6 @@ def make_max_Z_projections_for_folder(input_dir, output_dir):
 		# Select which dimension to project
 		max_proj = project_a_stack(stack)
 		stack_list.append(max_proj.getProcessor())
-	tstack_name = FredericFile(os.path.split(fnames[0])[1])
-	tstack_name.time_point = "(TS)"
-	tstack_name.plane = "(ZM)"
 	max_proj_stack = ImageStack(img_for_dims.width, img_for_dims.height)
 	for slice in stack_list:
 		max_proj_stack.addSlice(None, slice)
@@ -509,18 +609,23 @@ def is_polygon_roi_overlapping_image_edges(image, roi):
 		is_overlapping = True
 	return is_overlapping
 
-def create_crop_template(max_time_projection, meta_dir, dataset):
+
+def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal_crop_box_width, use_dataset_box_width):
 	"""Crop max_time_projection, create crop template .roi object, save it in meta_dir.
 
 	Args:
 		max_time_projection (ImagePlus): a single image of max projection of a time stack of max projections
 		meta_dir (str): full path to metadata dir
 		dataset (dict): metadata about the dataset to extract information about embryo orientation
+		dataset_maximal_crop_box_width (int):
+		use_dataset_box_width (bool):
 
 	Returns:
-		crop_template (Roi): bounding box around the embryo with proper rotation and size
-		cropped_max_time_proj (ImagePlus): cropped max time projection
+		Roi: bounding box around the embryo with proper rotation and size
+		ImagePlus: cropped max time projection
+		int: updated dataset maximal crop box width
 	"""
+	updated_dataset_maximal_crop_box_width = dataset_maximal_crop_box_width	
 	IJ.run("Clear Results")
 
 	imp = max_time_projection
@@ -554,11 +659,14 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 	IJ.run(imp, "Select Bounding Box (guess background color)", "")
 	bounding_roi = imp.getRoi()
 	box_minimum_possible_width = bounding_roi.getBounds().width # extracting width field from java.awt.Rectangle
-	box_minimum_enforced_width = 1000 # We chose to enforse the lower bound
+	# We chose to enforse the lower bound
+	box_minimum_enforced_width = MINIMUM_CROP_BOX_WIDTH
 	box_minimum_width = max(box_minimum_possible_width, box_minimum_enforced_width)
 	bounding_center_x = bounding_roi.getContourCentroid()[0]
 	bounding_center_y = bounding_roi.getContourCentroid()[1]
-	box_width = 1100
+	box_width = min(DEFAULT_CROP_BOX_WIDTH, dataset_maximal_crop_box_width)
+	if use_dataset_box_width == True:
+		logging.info("\tUsing dataset's global value of the crop box width: %s to create the crop template" % dataset_maximal_crop_box_width)
 	IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
 	       (box_width, bounding_center_x, bounding_center_y))
 	roim.runCommand('reset')
@@ -567,9 +675,12 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 
 	# Check if the rotated bounding box extend over the image
 	if is_polygon_roi_overlapping_image_edges(imp, bounding_roi_rot) == True:
+		if use_dataset_box_width == True:
+			raise Exception(
+				"Fixed bounding box width for the whole dataset cannot be applied to all dimensions.")
 		logging.info(
 			"\tBox of 1100x600 could not be fitted to the embryo without protruding out of the image. Searching for a smaller box.")
-		box_width = 1090
+		box_width -= 10
 		while box_width >= box_minimum_width:
 			imp.deleteRoi()
 			IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
@@ -582,6 +693,13 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 			box_width -= 10
 		else:
 			raise Exception("Could not find a bounding box that contains whole embryo and does not protrude out of the image.")
+	if use_dataset_box_width == False:
+		# box_width could only decrease after receiving dataset_maximal_crop_box_width, 
+		# so setting the global dataset box width to this new minimal value in box_width or 
+		# dataset_maximal_crop_box_width is unchanged, if box_width did not change
+		updated_dataset_maximal_crop_box_width = box_width
+		if dataset_maximal_crop_box_width != box_width:
+			logging.info("\tUpdated the global dataset max crop box width to: %s" % box_width)
 
 	imp.setRoi(bounding_roi_rot, True)
 	crop_template = imp.getRoi()
@@ -608,7 +726,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset):
 		IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Left", "")
 	roim.close()
 	table.reset()
-	return (crop_template, cropped_max_time_proj)
+	return (crop_template, cropped_max_time_proj, updated_dataset_maximal_crop_box_width)
 
 
 def get_polygon_roi_angle(roi):
@@ -625,7 +743,15 @@ def get_polygon_roi_angle(roi):
 	y1 = roi.getPolygon().ypoints[0]
 	y2 = roi.getPolygon().ypoints[1]
 	angle = roi.getAngle(x1, y1, x2, y2)
+	# TODO: Find a better way to find angle of rotation of the box
+	if angle > 135:
+		angle = angle - 180
+	if angle < -135:
+		angle = 180 - angle
+	logging.info("\tBounding box x-coord:%s, y-coord:%s, rot-angle:%s" %
+	             (roi.getPolygon().xpoints, roi.getPolygon().ypoints, angle))
 	return angle
+
 
 def get_rotated_rect_roi_width(roi):
 	x1 = roi.getPolygon().xpoints[0]
@@ -695,6 +821,7 @@ def find_planes_to_keep(zstack, meta_dir):
 	resliced = Slicer.reslice(Slicer(), zstack)
 
 	max_proj_reslice = project_a_stack(resliced)
+	debug_copy_max_proj_reslice = max_proj_reslice.duplicate()
 	ip = max_proj_reslice.getProcessor()
 	radius = 4
 	RankFilters().rank(ip, radius, RankFilters.MEDIAN)
@@ -723,6 +850,20 @@ def find_planes_to_keep(zstack, meta_dir):
 	middle_y = box_start + box_width / 2
 	start_plane = int(round(middle_y - 75))
 	end_plane = int(round(middle_y + 74))
+
+	if start_plane < 1:
+		if start_plane < -5:
+			raise Exception("Embryo is more than 5 planes off center in Z-direction, for the 150 planes cropping.")
+		start_plane = 1
+		end_plane = 150
+	if end_plane > zstack.getNSlices():
+		if end_plane > zstack.getNSlices() + 5:
+			raise Exception(
+				"Embryo is more than 5 planes off center in Z-direction, for the 150 planes cropping.")
+		end_plane = zstack.getNSlices()
+		start_plane = zstack.getNSlices() - 149
+	logging.info("\t selected planes to keep: %s-%s" % (start_plane, end_plane))
+	logging.info("\t Cropping Y-projection for user assessment with %s planes" % for_user_asessment.getNSlices())
 
 	# Save cropped Y-projection for user assessment
 	for_user_asessment = subset_planes(
