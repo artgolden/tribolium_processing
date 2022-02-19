@@ -828,6 +828,7 @@ def crop_stack_by_template(stack, crop_template, dataset):
 		IJ.run(cropped_stack_resized, "Flip Horizontally", "stack")
 	else:
 		IJ.run(cropped_stack_resized, "Rotate 90 Degrees Left", "")
+	IJ.run(cropped_stack_resized, "Select None", "")
 	return cropped_stack_resized
 
 
@@ -958,6 +959,7 @@ def subset_planes(stack_img, planes):
 		ip = stack.getProcessor(i)
 		cropped_stack.addSlice(ip)
 	stack_img.setStack(cropped_stack)
+	IJ.run(stack_img, "Select None", "")
 	return stack_img
 
 
