@@ -3,7 +3,7 @@
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.2.18 :) 
+# Last manual update of this line 2022.2.19 :) 
 
 from distutils.dir_util import mkpath
 import math
@@ -979,7 +979,7 @@ def auto_contrast(image):
 		if num_overexposed_pixels > num_overexposed_pixels_threshold:
 			upper_threshold = i
 			break
-	logging.info("Chosen theese values to adjust image histogram, min: %s max: %s" % (triag_threshold, upper_threshold))
+	# logging.info("Chosen theese values to adjust image histogram, min: %s max: %s" % (triag_threshold, upper_threshold))
 	image.setDisplayRange(triag_threshold, upper_threshold)
 	IJ.run(image, "Apply LUT", "")
 
