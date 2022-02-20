@@ -3,7 +3,7 @@
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.2.19 :) 
+# Last manual update of this line 2022.2.20 :) 
 
 from distutils.dir_util import mkpath
 import math
@@ -218,6 +218,12 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 
 		logging.info("Started processing dataset: DS%04d" % dataset_id)
 		raw_images_dir = get_raw_images_dir(datasets_dir, dataset_id)
+		root_dataset_dir = os.path.split(raw_images_dir)[0]
+		if os.path.exists(os.path.join(root_dataset_dir, "B_BRANCH_FINISHED")):
+			logging.info(
+				"Found B_BRANCH_FINISHED file. Dataset DS%04d already processed, skipping." % dataset_id)
+			continue
+			
 	
 		logging.info("\tArranging raw image files")
 		try:
@@ -235,7 +241,6 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		chan_dir_name = "CH%04d" % channel
 		raw_images_direction_dirs = make_directions_dirs(
 			os.path.join(raw_images_dir, chan_dir_name))
-		root_dataset_dir = os.path.split(raw_images_dir)[0]
 		meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
 		meta_d_dirs = make_directions_dirs(os.path.join(meta_dir, chan_dir_name))
 		tstack_dataset_dirs = make_directions_dirs(
@@ -423,7 +428,9 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		if skip_the_dataset == True:
 			logging.info("Had to skip the dataset DS%04d." % dataset_id)
 			continue
+		open(os.path.join(root_dataset_dir, "B_BRANCH_FINISHED"), 'a').close()
 		logging.info("Finished processing dataset DS%04d successfully." % dataset_id)
+		
 	logging.info("Finished processing all datasets.")
 	print("Finished processing all datasets.")
 
