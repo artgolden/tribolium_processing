@@ -3,7 +3,7 @@
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.2.20 :) 
+# Last manual update of this line 2022.2.20 :)
 
 from distutils.dir_util import mkpath
 import math
@@ -17,9 +17,9 @@ from datetime import datetime
 from java.io import File
 from ij.io import FileSaver
 from ij import IJ, ImagePlus, ImageStack, WindowManager
-from ij.plugin.filter import RankFilters  
+from ij.plugin.filter import RankFilters
 from fiji.threshold import Auto_Threshold
-from ij.plugin.filter import ParticleAnalyzer 
+from ij.plugin.filter import ParticleAnalyzer
 from ij.measure import ResultsTable
 from ij.measure import Measurements
 from ij.plugin.frame import RoiManager
@@ -30,14 +30,12 @@ from ij.plugin import Slicer
 from ij.plugin import StackCombiner
 
 #TODO:
-#	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75)) 
+#	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75))
 # 	gives negative values? Make a better solution than just shifting the 150 plane crop.
 #
 # - Allow user to specify manual bounding box.
 # - Write a tutorial inside the script
 # - create a better way of logging histogram adjustments for stacks.
-
-
 
 
 EXAMPLE_JSON_METADATA_FILE = """
@@ -91,6 +89,7 @@ MONTAGE_DIR_NAME = "(B5)-TStacks-ZN-Montage"
 DEFAULT_CROP_BOX_WIDTH = 1100
 MINIMUM_CROP_BOX_WIDTH = 1000
 
+
 class FredericFile:
 	"""
 	File naming for light-sheet image files. Frederic Strobl™ 
@@ -109,21 +108,19 @@ class FredericFile:
 	def __init__(self, file_name):
 		name_parts = re.split("-DS|TP|DR|CH|PL|\.", file_name)
 		if len(name_parts) != 7:
-			raise Exception("Image file name is improperly formatted! Check documentation inside the script.")
+			raise Exception(
+				"Image file name is improperly formatted! Check documentation inside the script.")
 		self.dataset_name, self.dataset_id, self.time_point, self.direction, self.channel, self.plane, self.extension = name_parts
 		self.extension.lower()
 
 	def get_name(self):
-		return "%s-DS%sTP%sDR%sCH%sPL%s.%s" % (self.dataset_name, 
-											   self.dataset_id, 
-											   self.time_point, 
-											   self.direction, 
-											   self.channel, 
-											   self.plane, 
-											   self.extension)
-
-		
-
+		return "%s-DS%sTP%sDR%sCH%sPL%s.%s" % (self.dataset_name,
+                                         self.dataset_id,
+                                         self.time_point,
+                                         self.direction,
+                                         self.channel,
+                                         self.plane,
+                                         self.extension)
 
 
 def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
@@ -152,10 +149,10 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 	now = datetime.now()
 	dt_string = now.strftime("%Y-%b-%d-%H%M%S")
 	logging.basicConfig(filename=os.path.join(datasets_dir, "%s-sort_rename.log" % dt_string),
-						filemode='w',
-						format='%(asctime)s-%(levelname)s - %(message)s',
-						datefmt='%d-%b-%y %H:%M:%S',
-						level=logging.INFO)
+                     filemode='w',
+                     format='%(asctime)s-%(levelname)s - %(message)s',
+                     datefmt='%d-%b-%y %H:%M:%S',
+                     level=logging.INFO)
 
 	# Check metadata file for correctness
 	for dataset in datasets_meta["datasets"]:
@@ -202,8 +199,6 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		if not raw_images_dir:
 			print("Exiting.")
 			exit(1)
-		
-			
 
 	for dataset in datasets_meta["datasets"]:
 		skip_the_dataset = False
@@ -223,8 +218,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			logging.info(
 				"Found B_BRANCH_FINISHED file. Dataset DS%04d already processed, skipping." % dataset_id)
 			continue
-			
-	
+
 		logging.info("\tArranging raw image files")
 		try:
 			move_files(
@@ -244,21 +238,23 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
 		meta_d_dirs = make_directions_dirs(os.path.join(meta_dir, chan_dir_name))
 		tstack_dataset_dirs = make_directions_dirs(
-						os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
+                    os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
 		raw_cropped_dirs = make_directions_dirs(os.path.join(
 			root_dataset_dir, RAW_CROPPED_DIR_NAME, chan_dir_name))
 		# Loop one time over all dimensions in channel 1 to determine the dataset_maximal_crop_box_width
 		for raw_dir, tstack_dir, m_dir, direction in zip(raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, range(1, 5)):
-			logging.info("\tCreating crop templates for all directions in CH0001 to ensure that all crop templates have the same dimensions.")
+			logging.info(
+				"\tCreating crop templates for all directions in CH0001 to ensure that all crop templates have the same dimensions.")
 			logging.info("\tChannel: %s Direction: %s In the loop over directions. This iteration operating on the following directories:" % (
 				channel, direction))
-			logging.info("\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n" % (raw_dir, tstack_dir, m_dir))
-			
-			
+			logging.info("\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n" %
+			             (raw_dir, tstack_dir, m_dir))
+
 			tstack_backup_dir = os.path.join(tstack_dir, "uncropped_backup")
 			if not os.path.exists(tstack_backup_dir):
 				os.mkdir(tstack_backup_dir)
-			logging.info("\tChannel: %s Direction: %s Creating a stack of max Z-projections from raw stack." % (channel, direction))
+			logging.info("\tChannel: %s Direction: %s Creating a stack of max Z-projections from raw stack." %
+			             (channel, direction))
 			mproj_stack_file_name = get_tiff_name_from_dir(raw_dir)
 			mproj_stack_file_name.plane = "(ZM)"
 			mproj_stack_file_name.time_point = "(TS)"
@@ -270,11 +266,13 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				fs.saveAsTiff(mproj_stack_path)
 			else:
 				max_proj_stack = IJ.openImage(mproj_stack_path)
-				logging.info("\tChannel: %s Direction: %s Found existing max Z-projections. Using them." % (channel, direction))
+				logging.info(
+					"\tChannel: %s Direction: %s Found existing max Z-projections. Using them." % (channel, direction))
 
 			max_time_proj_file_name = mproj_stack_file_name
 			max_time_proj_file_name.time_point = "(TM)"
-			max_time_proj_full_path = os.path.join(m_dir, max_time_proj_file_name.get_name())
+			max_time_proj_full_path = os.path.join(
+				m_dir, max_time_proj_file_name.get_name())
 			if not os.path.exists(max_time_proj_full_path):
 				max_time_proj = project_a_stack(max_proj_stack)
 				fs = FileSaver(max_time_proj)
@@ -298,34 +296,39 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			fs.saveAsTiff(os.path.join(
 				m_dir, "cropped_max_time_proj.tif"))
 
-		# Main loop over the channels and directions for the dataset		
+		# Main loop over the channels and directions for the dataset
 		for channel, _ in enumerate(specimen_directions_in_channels, start=1):
 			if skip_the_dataset == True:
 				break
 			chan_dir_name = "CH%04d" % channel
-			raw_images_direction_dirs = make_directions_dirs(os.path.join(raw_images_dir, chan_dir_name))
+			raw_images_direction_dirs = make_directions_dirs(
+				os.path.join(raw_images_dir, chan_dir_name))
 			root_dataset_dir = os.path.split(raw_images_dir)[0]
 			meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
 			meta_d_dirs = make_directions_dirs(os.path.join(meta_dir, chan_dir_name))
-			tstack_dataset_dirs = make_directions_dirs(os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
-			raw_cropped_dirs = make_directions_dirs(os.path.join(root_dataset_dir, RAW_CROPPED_DIR_NAME, chan_dir_name))
+			tstack_dataset_dirs = make_directions_dirs(
+				os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
+			raw_cropped_dirs = make_directions_dirs(os.path.join(
+				root_dataset_dir, RAW_CROPPED_DIR_NAME, chan_dir_name))
 			contrast_dirs = make_directions_dirs(os.path.join(
 				root_dataset_dir, CONTRAST_DIR_NAME, chan_dir_name))
 
 			for direction, raw_dir, tstack_dir, m_dir, raw_cropped_dir, contr_dir in zip(range(1, 5), raw_images_direction_dirs, tstack_dataset_dirs, meta_d_dirs, raw_cropped_dirs, contrast_dirs):
 				if skip_the_dataset == True:
 					break
-				# if direction > 1: 
+				# if direction > 1:
 				# 	print "Skipping all other directions for testing"
 				# 	break
-				logging.info("\tChannel: %s Direction: %s In the loop over directions. This iteration operating on the following directories:" % (channel, direction))
-				logging.info("\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n" % (raw_dir, tstack_dir, m_dir, raw_cropped_dir))
+				logging.info("\tChannel: %s Direction: %s In the loop over directions. This iteration operating on the following directories:" % (
+					channel, direction))
+				logging.info("\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n" % (
+					raw_dir, tstack_dir, m_dir, raw_cropped_dir))
 				tstack_backup_dir = os.path.join(tstack_dir, "uncropped_backup")
-
 
 				if not os.path.exists(tstack_backup_dir):
 					os.mkdir(tstack_backup_dir)
-				logging.info("\tChannel: %s Direction: %s Creating a stack of max Z-projections from raw stack." % (channel, direction))
+				logging.info(
+					"\tChannel: %s Direction: %s Creating a stack of max Z-projections from raw stack." % (channel, direction))
 				mproj_stack_file_name = get_tiff_name_from_dir(raw_dir)
 				mproj_stack_file_name.plane = "(ZM)"
 				mproj_stack_file_name.time_point = "(TS)"
@@ -333,13 +336,11 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					tstack_backup_dir, mproj_stack_file_name.get_name())
 				if not os.path.exists(mproj_stack_path):
 					max_proj_stack = make_max_Z_projections_for_folder(raw_dir)
-					fs = FileSaver(max_proj_stack)
-					fs.saveAsTiff(mproj_stack_path)
+					save_copressed_tiff(max_proj_stack, mproj_stack_path)
 				else:
 					max_proj_stack = IJ.openImage(mproj_stack_path)
-					logging.info("\tChannel: %s Direction: %s Found existing max Z-projections. Using them." % (channel, direction))
-
-
+					logging.info(
+						"\tChannel: %s Direction: %s Found existing max Z-projections. Using them." % (channel, direction))
 
 				max_time_proj_file_name = mproj_stack_file_name
 				max_time_proj_file_name.time_point = "(TM)"
@@ -354,46 +355,51 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 						"\tChannel: %s Direction: %s Found existing max TIME-projection, using it. \n\t\t\t\t\t%s" % (channel, direction, max_time_proj_full_path))
 					max_time_proj = IJ.openImage(max_time_proj_full_path)
 
-				logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (channel, direction))
+				logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (
+					channel, direction))
 				try:
 					crop_template, cropped_max_time_proj, dataset_maximal_crop_box_width = create_crop_template(
 						max_time_proj, m_dir, dataset, dataset_maximal_crop_box_width, use_dataset_box_width=True)
 				except Exception as e:
-					logging.info("ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
+					logging.info(
+						"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 					skip_the_dataset = True
 					break
 				fs = FileSaver(cropped_max_time_proj)
 				fs.saveAsTiff(os.path.join(
 					m_dir, "cropped_max_time_proj.tif"))
 
-				logging.info("\tChannel: %s Direction: %s Cropping a stack of max projections." % (channel, direction))
+				logging.info("\tChannel: %s Direction: %s Cropping a stack of max projections." % (
+					channel, direction))
 				cropped_tstack_file_name = get_tiff_name_from_dir(
 					raw_dir)
 				cropped_tstack_file_name.time_point = "(TS)"
 				cropped_tstack_file_name.plane = "(ZM)"
-				cropped_tstack = crop_stack_by_template(max_proj_stack, crop_template, dataset)
-				fs = FileSaver(cropped_tstack)
-				fs.saveAsTiff(os.path.join(tstack_dir, cropped_tstack_file_name.get_name()))
+				cropped_tstack = crop_stack_by_template(
+					max_proj_stack, crop_template, dataset)
+				save_copressed_tiff(cropped_tstack, os.path.join(
+					tstack_dir, cropped_tstack_file_name.get_name()))
 
 				logging.info("\tChannel: %s Direction: %s Creating histogram adjusted stacks of max projections." % (
 					channel, direction))
 				cropped_adjusted_tstack = adjust_histogram_stack(cropped_tstack)
 				cropped_adjusted_tstack_name = cropped_tstack_file_name
 				cropped_adjusted_tstack_name.plane = "(ZN)"
-				fs = FileSaver(cropped_adjusted_tstack)
-				fs.saveAsTiff(os.path.join(
+				save_copressed_tiff(cropped_adjusted_tstack, os.path.join(
 					contr_dir, cropped_adjusted_tstack_name.get_name()))
 
-
-				logging.info("\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
+				logging.info(
+					"\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
 				planes_kept = (0, 0)
 				for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
 					raw_stack = IJ.openImage(raw_stack_file_name)
 					IJ.run(raw_stack, "Properties...",
-						"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
-					raw_stack_cropped = crop_stack_by_template(raw_stack, crop_template, dataset)
+                                            "frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
+					raw_stack_cropped = crop_stack_by_template(
+						raw_stack, crop_template, dataset)
 					if i == 0:
-						logging.info("\tChannel: %s Direction: %s Finding which planes to keep in raw image stacks." % (channel, direction))
+						logging.info("\tChannel: %s Direction: %s Finding which planes to keep in raw image stacks." % (
+							channel, direction))
 						try:
 							planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
 						except Exception as e:
@@ -401,11 +407,12 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 								channel, direction, e))
 							skip_the_dataset = True
 							break
-						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." % (channel, direction, planes_kept))
-					raw_stack_cropped = reset_img_properties(raw_stack_cropped)
+						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
+						             (channel, direction, planes_kept))
+					raw_stack_cropped = reset_img_properties(raw_stack_cropped, voxel_depth=4)
 					raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
-					fs = FileSaver(raw_stack_cropped)
-					fs.saveAsTiff(os.path.join(raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
+					save_copressed_tiff(raw_stack_cropped, os.path.join(
+						raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
 			montage_stack = ImagePlus()
 			montage_stack_name = None
 			for i, contr_dir in enumerate(contrast_dirs):
@@ -417,20 +424,18 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					montage_stack_name = get_tiff_name_from_dir(contr_dir)
 				if i > 0:
 					montage_stack = StackCombiner.combineHorizontally(StackCombiner(),
-						montage_stack, imp_stack.getStack())
+                                                       montage_stack, imp_stack.getStack())
 			montage_stack_name.direction = "(MT)"
 			montage_stack = ImagePlus("montage", montage_stack)
-			fs = FileSaver(montage_stack)
-			fs.saveAsTiff(os.path.join(root_dataset_dir,
-                              MONTAGE_DIR_NAME, montage_stack_name.get_name()))
-				
+			save_copressed_tiff(montage_stack, os.path.join(
+				root_dataset_dir, MONTAGE_DIR_NAME, montage_stack_name.get_name()))
 
 		if skip_the_dataset == True:
 			logging.info("Had to skip the dataset DS%04d." % dataset_id)
 			continue
 		open(os.path.join(root_dataset_dir, "B_BRANCH_FINISHED"), 'a').close()
 		logging.info("Finished processing dataset DS%04d successfully." % dataset_id)
-		
+
 	logging.info("Finished processing all datasets.")
 	print("Finished processing all datasets.")
 
@@ -453,7 +458,8 @@ def get_raw_images_dir(datasets_dir, dataset_id):
 	raw_images_dir = os.path.join(
 		datasets_dir, this_dataset_dir[0], RAW_IMAGES_DIR_NAME)
 	if not os.path.isdir(raw_images_dir):
-		error_msg = "	Error: there are no %s directoriy for the dataset with ID: %04d." % (RAW_IMAGES_DIR_NAME, dataset_id)
+		error_msg = "	Error: there are no %s directoriy for the dataset with ID: %04d." % (
+			RAW_IMAGES_DIR_NAME, dataset_id)
 		logging.info(error_msg)
 		print(error_msg)
 		return None
@@ -467,9 +473,9 @@ def make_directions_dirs(input_dir):
 			direction_dirs.append(new_dir)
 			if not os.path.exists(new_dir):
 				mkpath(new_dir)
-				
+
 	return direction_dirs
-		
+
 
 def get_tiff_name_from_dir(input_dir):
 	file_name = None
@@ -525,28 +531,28 @@ def move_files(raw_images_dir, specimen_directions_in_channels, dataset_id, data
 			raise ValueError("In the metadata for the dataset: DS %04d there is no entry for the specimen: %i" % (
 				dataset_id, specimen))
 
-
 		image_channel = specimens_info[specimen]["channel"]
 		embryo_direction = specimens_info[specimen]["direction"]
 		new_file_name = "%sDS%04dTP%04dDR%04dCH%04dPL(ZS).tif" % (dataset_name_prefix,
-																  dataset_id,
-																  time_point,
-																  embryo_direction,
-                                                            	  image_channel)
+                                                            dataset_id,
+                                                            time_point,
+                                                            embryo_direction,
+                                                            image_channel)
 		os.rename(file_path, os.path.join(
 			direction_dirs[embryo_direction - 1], new_file_name))
 		logging.info("New file \n%s\n Full path:\n%s\n Original name: \n%s\n Original path: \n%s\n" % (new_file_name,
-																									   os.path.join(
-																										   direction_dirs[embryo_direction - 1], new_file_name),
-																									   file_name,
-																									   file_path)
-					 )
+                                                                                                 os.path.join(
+                                                                                                     direction_dirs[embryo_direction - 1], new_file_name),
+                                                                                                 file_name,
+                                                                                                 file_path)
+               )
 
 
 def is_specimen_input_valid(specimens_per_direction):
 	if not isinstance(specimens_per_direction, tuple):
 		return False
-	possible_specimens_lists = [[0, 1, 2, 3], [4, 5, 6, 7], [8,9,10,11], [12,13,14,15], [16,17,18,19], [20,21,22,23]]
+	possible_specimens_lists = [[0, 1, 2, 3], [4, 5, 6, 7], [
+		8, 9, 10, 11], [12, 13, 14, 15], [16, 17, 18, 19], [20, 21, 22, 23]]
 	if sorted(list(specimens_per_direction)) in possible_specimens_lists:
 		return True
 	return False
@@ -578,7 +584,7 @@ def get_tiffs_in_directory(directory):
 			file_names.append(os.path.join(directory, fname))
 	file_names = sorted(file_names)
 	if len(file_names) < 1:
-		raise Exception("No image files found in %s" % directory)	
+		raise Exception("No image files found in %s" % directory)
 	return file_names
 
 
@@ -621,7 +627,7 @@ def make_max_Z_projections_for_folder(input_dir):
 	for slice in stack_list:
 		max_proj_stack.addSlice(None, slice)
 	max_proj_stack = ImagePlus("max_proj", max_proj_stack)
-	max_proj_stack = reset_img_properties(max_proj_stack)
+	max_proj_stack = reset_img_properties(max_proj_stack, voxel_depth=1)
 	return max_proj_stack
 
 
@@ -662,7 +668,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 		ImagePlus: cropped max time projection
 		int: updated dataset maximal crop box width
 	"""
-	updated_dataset_maximal_crop_box_width = dataset_maximal_crop_box_width	
+	updated_dataset_maximal_crop_box_width = dataset_maximal_crop_box_width
 	IJ.run("Clear Results")
 
 	imp = max_time_projection
@@ -677,7 +683,8 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
 	IJ.run(imp2, "Convert to Mask", "")
 	table = ResultsTable()
-	roim = RoiManager(False)  # Initialise without display (boolean value is ignored)
+	# Initialise without display (boolean value is ignored)
+	roim = RoiManager(False)
 	MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
 	MAX_PARTICLE_SIZE = float("inf")
 	ParticleAnalyzer.setRoiManager(roim)
@@ -695,15 +702,18 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	imp.setRoi(roi_arr[len(roi_arr) - 1])
 	IJ.run(imp, "Select Bounding Box (guess background color)", "")
 	bounding_roi = imp.getRoi()
-	box_minimum_possible_width = bounding_roi.getBounds().width # extracting width field from java.awt.Rectangle
+	# extracting width field from java.awt.Rectangle
+	box_minimum_possible_width = bounding_roi.getBounds().width
 	# We chose to enforse the lower bound
 	box_minimum_enforced_width = MINIMUM_CROP_BOX_WIDTH
-	box_minimum_width = max(box_minimum_possible_width, box_minimum_enforced_width)
+	box_minimum_width = max(box_minimum_possible_width,
+	                        box_minimum_enforced_width)
 	bounding_center_x = bounding_roi.getContourCentroid()[0]
 	bounding_center_y = bounding_roi.getContourCentroid()[1]
 	box_width = min(DEFAULT_CROP_BOX_WIDTH, dataset_maximal_crop_box_width)
 	if use_dataset_box_width == True:
-		logging.info("\tUsing dataset's global value of the crop box width: %s to create the crop template" % dataset_maximal_crop_box_width)
+		logging.info("\tUsing dataset's global value of the crop box width: %s to create the crop template" %
+		             dataset_maximal_crop_box_width)
 	IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
 	       (box_width, bounding_center_x, bounding_center_y))
 	roim.runCommand('reset')
@@ -729,22 +739,25 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 				break
 			box_width -= 10
 		else:
-			raise Exception("Could not find a bounding box that contains whole embryo and does not protrude out of the image.")
+			raise Exception(
+				"Could not find a bounding box that contains whole embryo and does not protrude out of the image.")
 	if use_dataset_box_width == False:
-		# box_width could only decrease after receiving dataset_maximal_crop_box_width, 
-		# so setting the global dataset box width to this new minimal value in box_width or 
+		# box_width could only decrease after receiving dataset_maximal_crop_box_width,
+		# so setting the global dataset box width to this new minimal value in box_width or
 		# dataset_maximal_crop_box_width is unchanged, if box_width did not change
 		updated_dataset_maximal_crop_box_width = box_width
 		if dataset_maximal_crop_box_width != box_width:
-			logging.info("\tUpdated the global dataset max crop box width to: %s" % box_width)
+			logging.info(
+				"\tUpdated the global dataset max crop box width to: %s" % box_width)
 
 	imp.setRoi(bounding_roi_rot, True)
 	crop_template = imp.getRoi()
 	roim.addRoi(crop_template)
 	roim.select(0)
 	roim.runCommand("Save", os.path.join(meta_dir, "crop_template.roi"))
-	final_imp = imp.crop() # This crops by a unrotated bounding box created around the rotated selection box
-						   # so later, when we rotate and crop again there will be no blacked corners in the image.
+	# This crops by a unrotated bounding box created around the rotated selection box
+	final_imp = imp.crop()
+   # so later, when we rotate and crop again there will be no blacked corners in the image.
 	IJ.run(final_imp, "Select All", "")
 	IJ.run(final_imp, "Rotate... ",
 	       "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
@@ -756,9 +769,9 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	if dataset["head_direction"] == "left":
 		IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Right", "")
 
-		# So that illumination is comming from the right. 
+		# So that illumination is comming from the right.
 		# Right now everything is based on that illumination on the images from mDSLM is always coming from the top.
-		IJ.run(cropped_max_time_proj, "Flip Horizontally", "") 
+		IJ.run(cropped_max_time_proj, "Flip Horizontally", "")
 	else:
 		IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Left", "")
 	roim.close()
@@ -797,7 +810,7 @@ def get_rotated_rect_roi_width(roi):
 	y2 = roi.getPolygon().ypoints[1]
 	width = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 	# logging.info("Determined rectangular roi width before rounding: %s" % width)
-	width = round(width / 10 ) * 10 
+	width = round(width / 10) * 10
 	logging.info("\tRectangular roi width: %s" % width)
 	return width
 
@@ -822,7 +835,7 @@ def crop_stack_by_template(stack, crop_template, dataset):
 	IJ.run(cropped_stack, "Select All", "")
 
 	IJ.run(cropped_stack, "Rotate... ",
-		"angle=%s grid=1 interpolation=Bilinear stack" % int(round(get_polygon_roi_angle(crop_template))))
+            "angle=%s grid=1 interpolation=Bilinear stack" % int(round(get_polygon_roi_angle(crop_template))))
 	final_center_x = cropped_stack.getWidth() / 2
 	final_center_y = cropped_stack.getHeight() / 2
 	box_width = get_rotated_rect_roi_width(crop_template)
@@ -893,7 +906,8 @@ def find_planes_to_keep(zstack, meta_dir):
 
 	if start_plane < 1:
 		if start_plane < -5:
-			raise Exception("Embryo is more than 5 planes off center in Z-direction, for the 150 planes cropping.")
+			raise Exception(
+				"Embryo is more than 5 planes off center in Z-direction, for the 150 planes cropping.")
 		start_plane = 1
 		end_plane = 150
 	if end_plane > zstack.getNSlices():
@@ -903,7 +917,8 @@ def find_planes_to_keep(zstack, meta_dir):
 		end_plane = zstack.getNSlices()
 		start_plane = zstack.getNSlices() - 149
 	logging.info("\t selected planes to keep: %s-%s" % (start_plane, end_plane))
-	logging.info("\t Cropping Y-projection for user assessment with %s planes" % for_user_asessment.getNSlices())
+	logging.info("\t Cropping Y-projection for user assessment with %s planes" %
+	             for_user_asessment.getNSlices())
 
 	# Save cropped Y-projection for user assessment
 	for_user_asessment = subset_planes(
@@ -916,13 +931,13 @@ def find_planes_to_keep(zstack, meta_dir):
 
 	for_user_asessment = project_a_stack(for_user_asessment)
 	fs = FileSaver(for_user_asessment)
-	fs.saveAsTiff(os.path.join(meta_dir, "Y_projected_raw_stack_for_asessment_of_plane_selection.tif"))
-
+	fs.saveAsTiff(os.path.join(
+		meta_dir, "Y_projected_raw_stack_for_asessment_of_plane_selection.tif"))
 
 	return (start_plane, end_plane)
-	
 
-def reset_img_properties(image):
+
+def reset_img_properties(image, voxel_depth):
 	"""Reset properties for an ImagePlus image and remove slice lables
 
 	Args:
@@ -931,11 +946,8 @@ def reset_img_properties(image):
 	Returns:
 		ImagePlus: image with reset properties
 	"""
-	depth = 4
 	nslices = image.getNSlices()
-	if nslices == 1:
-		depth = 1
-	IJ.run(image, "Properties...", "channels=1 slices=%s frames=1 unit=pixel pixel_width=1.0000 pixel_height=1.0000 voxel_depth=%s.0000 origin=0,0,0" % (nslices, depth))
+	IJ.run(image, "Properties...", "channels=1 slices=%s frames=1 unit=pixel pixel_width=1.0000 pixel_height=1.0000 voxel_depth=%s.0000 origin=0,0,0" % (nslices, voxel_depth))
 
 	# Equivalent of "Remove Slice Labels" I had to do it manually because
 	# "Remove Slice Labels" function always displays the output image
@@ -1001,6 +1013,13 @@ def adjust_histogram_stack(imp_stack):
 	adjusted_stack = ImagePlus(
 		"Adjusted contrast", ImageStack.create(adjusted_stack))
 	return adjusted_stack
+
+
+def save_copressed_tiff(image, path):
+	if os.path.exists(path):
+		os.remove(path)
+	IJ.run(image, "Bio-Formats Exporter",
+	       "save=%s export compression=zlib" % path)
 
 
 if __name__ in ['__builtin__', '__main__']:
