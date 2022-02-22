@@ -86,6 +86,11 @@ RAW_CROPPED_DIR_NAME = "(B2)-ZStacks"
 CONTRAST_DIR_NAME = "(B4)-TStacks-ZN"
 MONTAGE_DIR_NAME = "(B5)-TStacks-ZN-Montage"
 
+DATASET_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
+DATASET_FINISHED_FILE_NAME = "B_BRANCH_FINISHED"
+DATASET_ACTIVE_FILE_NAME = "B_BRANCH_ACTIVE"
+
+
 DEFAULT_CROP_BOX_WIDTH = 1100
 MINIMUM_CROP_BOX_WIDTH = 1000
 
@@ -214,10 +219,19 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		logging.info("Started processing dataset: DS%04d" % dataset_id)
 		raw_images_dir = get_raw_images_dir(datasets_dir, dataset_id)
 		root_dataset_dir = os.path.split(raw_images_dir)[0]
-		if os.path.exists(os.path.join(root_dataset_dir, "B_BRANCH_FINISHED")):
+		if os.path.exists(os.path.join(root_dataset_dir, DATASET_FINISHED_FILE_NAME)):
 			logging.info(
-				"Found B_BRANCH_FINISHED file. Dataset DS%04d already processed, skipping." % dataset_id)
+				"Found %s file. Dataset DS%04d already processed, skipping." % (DATASET_FINISHED_FILE_NAME, dataset_id))
 			continue
+		if os.path.exists(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME)):
+			logging.info(
+				"Found %s file. Dataset DS%04d errored while previous processing, skipping." % (DATASET_ERROR_FILE_NAME, dataset_id))
+			continue
+		if os.path.exists(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME)):
+			logging.info(
+				"Found %s file. Perhaps the dataset DS%04d is currently being processed by other Fiji instance, skipping." % (DATASET_ACTIVE_FILE_NAME, dataset_id))
+			continue
+		open(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME), 'a').close()
 
 		logging.info("\tArranging raw image files")
 		try:
@@ -291,6 +305,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				logging.info(
 					"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 				skip_the_dataset = True
+				open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
 				break
 			fs = FileSaver(cropped_max_time_proj)
 			fs.saveAsTiff(os.path.join(
@@ -364,6 +379,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					logging.info(
 						"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 					skip_the_dataset = True
+					open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
 					break
 				fs = FileSaver(cropped_max_time_proj)
 				fs.saveAsTiff(os.path.join(
@@ -406,6 +422,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 							logging.info("\tChannel: %s Direction: Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
 								channel, direction, e))
 							skip_the_dataset = True
+							open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
 							break
 						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
 						             (channel, direction, planes_kept))
@@ -433,7 +450,8 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		if skip_the_dataset == True:
 			logging.info("Had to skip the dataset DS%04d." % dataset_id)
 			continue
-		open(os.path.join(root_dataset_dir, "B_BRANCH_FINISHED"), 'a').close()
+		open(os.path.join(root_dataset_dir, DATASET_FINISHED_FILE_NAME), 'a').close()
+		os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
 		logging.info("Finished processing dataset DS%04d successfully." % dataset_id)
 
 	logging.info("Finished processing all datasets.")
