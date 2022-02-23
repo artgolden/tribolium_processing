@@ -3,7 +3,7 @@
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.2.20 :)
+# Last manual update of this line 2022.2.22 :)
 
 from distutils.dir_util import mkpath
 import math
@@ -90,6 +90,7 @@ DATASET_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
 DATASET_FINISHED_FILE_NAME = "B_BRANCH_FINISHED"
 DATASET_ACTIVE_FILE_NAME = "B_BRANCH_ACTIVE"
 
+DO_NOT_COMPRESS_ON_SAVE = True
 
 DEFAULT_CROP_BOX_WIDTH = 1100
 MINIMUM_CROP_BOX_WIDTH = 1000
@@ -444,8 +445,10 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
                                                        montage_stack, imp_stack.getStack())
 			montage_stack_name.direction = "(MT)"
 			montage_stack = ImagePlus("montage", montage_stack)
-			save_copressed_tiff(montage_stack, os.path.join(
-				root_dataset_dir, MONTAGE_DIR_NAME, montage_stack_name.get_name()))
+			montage_dir = os.path.join(root_dataset_dir, MONTAGE_DIR_NAME)
+			if not os.path.exists(montage_dir):
+				mkpath(montage_dir)
+			save_copressed_tiff(montage_stack, os.path.join(montage_dir, montage_stack_name.get_name()))
 
 		if skip_the_dataset == True:
 			logging.info("Had to skip the dataset DS%04d." % dataset_id)
@@ -736,6 +739,11 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	       (box_width, bounding_center_x, bounding_center_y))
 	roim.runCommand('reset')
 	bounding_roi = imp.getRoi()
+	# TODO: Find a better way to find angle of rotation of the box
+	if rot_angle > 135:
+		rot_angle = rot_angle - 180
+	if rot_angle < -135:
+		rot_angle = 180 - rot_angle
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
 
 	# Check if the rotated bounding box extend over the image
@@ -751,6 +759,11 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 			IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
                             (box_width, bounding_center_x, bounding_center_y))
 			bounding_roi = imp.getRoi()
+			# TODO: Find a better way to find angle of rotation of the box
+			if rot_angle > 135:
+				rot_angle = rot_angle - 180
+			if rot_angle < -135:
+				rot_angle = 180 - rot_angle
 			bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
 			if is_polygon_roi_overlapping_image_edges(imp, bounding_roi_rot) == False:
 				logging.info("\tFound a smaller box! Dimensions: %sx600" % box_width)
@@ -1036,7 +1049,11 @@ def adjust_histogram_stack(imp_stack):
 def save_copressed_tiff(image, path):
 	if os.path.exists(path):
 		os.remove(path)
-	IJ.run(image, "Bio-Formats Exporter",
+	if DO_NOT_COMPRESS_ON_SAVE == True:
+		fs = FileSaver(image)
+		fs.saveAsTiff(path)
+	else:
+		IJ.run(image, "Bio-Formats Exporter",
 	       "save=%s export compression=zlib" % path)
 
 
