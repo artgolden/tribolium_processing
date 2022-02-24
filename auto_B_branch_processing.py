@@ -90,7 +90,7 @@ DATASET_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
 DATASET_FINISHED_FILE_NAME = "B_BRANCH_FINISHED"
 DATASET_ACTIVE_FILE_NAME = "B_BRANCH_ACTIVE"
 
-DO_NOT_COMPRESS_ON_SAVE = True
+DO_NOT_COMPRESS_ON_SAVE = False
 
 DEFAULT_CROP_BOX_WIDTH = 1100
 MINIMUM_CROP_BOX_WIDTH = 1000
@@ -695,14 +695,18 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	imp = max_time_projection
 	ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
 
-	imp2 = ImagePlus("mask", ip)
+	mask = ImagePlus("mask", ip)
 	radius = 4
 	RankFilters().rank(ip, radius, RankFilters.MEDIAN)
 
 	hist = ip.getHistogram()
 	triag_threshold = Auto_Threshold.Triangle(hist)
 	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
-	IJ.run(imp2, "Convert to Mask", "")
+	IJ.run(mask, "Convert to Mask", "")
+	IJ.run(mask, "Options...", "iterations=40 count=2 black pad do=Erode")
+	IJ.run(mask, "Options...", "iterations=40 count=2 black pad do=Dilate")
+	IJ.run(mask, "Options...", "iterations=40 count=3 black pad do=Erode")
+	IJ.run(mask, "Options...", "iterations=40 count=3 black pad do=Dilate")
 	table = ResultsTable()
 	# Initialise without display (boolean value is ignored)
 	roim = RoiManager(False)
@@ -716,34 +720,96 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
             MIN_PARTICLE_SIZE,
             MAX_PARTICLE_SIZE
         )
-	pa.analyze(imp2)
+	pa.analyze(mask)
 	rot_angle = round(table.getValue("Angle", 0), ndigits=1)
-	roi_arr = roim.getRoisAsArray()
-	roim.runCommand('reset')
-	imp.setRoi(roi_arr[len(roi_arr) - 1])
-	IJ.run(imp, "Select Bounding Box (guess background color)", "")
-	bounding_roi = imp.getRoi()
-	# extracting width field from java.awt.Rectangle
-	box_minimum_possible_width = bounding_roi.getBounds().width
-	# We chose to enforse the lower bound
-	box_minimum_enforced_width = MINIMUM_CROP_BOX_WIDTH
-	box_minimum_width = max(box_minimum_possible_width,
-	                        box_minimum_enforced_width)
-	bounding_center_x = bounding_roi.getContourCentroid()[0]
-	bounding_center_y = bounding_roi.getContourCentroid()[1]
-	box_width = min(DEFAULT_CROP_BOX_WIDTH, dataset_maximal_crop_box_width)
-	if use_dataset_box_width == True:
-		logging.info("\tUsing dataset's global value of the crop box width: %s to create the crop template" %
-		             dataset_maximal_crop_box_width)
-	IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
-	       (box_width, bounding_center_x, bounding_center_y))
-	roim.runCommand('reset')
-	bounding_roi = imp.getRoi()
 	# TODO: Find a better way to find angle of rotation of the box
 	if rot_angle > 135:
 		rot_angle = rot_angle - 180
 	if rot_angle < -135:
 		rot_angle = 180 - rot_angle
+	roi_arr = roim.getRoisAsArray()
+	roim.runCommand('reset')
+	imp.setRoi(roi_arr[len(roi_arr) - 1])
+	IJ.run(imp, "Select Bounding Box (guess background color)", "")
+	bounding_roi = imp.getRoi()
+	# Crop the image so the borders are equidistant from the borders of the bounding box
+	# for the center of rotation to be aligned roughly with the center of the embryo
+	bounding_rectangle = bounding_roi.getBounds()
+	# extracting width field from java.awt.Rectangle
+	i = bounding_rectangle.x
+	j = bounding_rectangle.y
+	We = bounding_rectangle.width
+	He = bounding_rectangle.height
+	W = imp.getWidth()
+	H = imp.getHeight()
+	ax = i
+	bx = W - i - We
+	ay = j
+	by = H - j - He
+	xn = i - min(ax, bx)
+	yn = j - min(ay, by)
+	Wn = We + 2 * min(ax, bx)
+	Hn = He + 2 * min(ay, by)
+	IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s" %
+	       (Wn, Hn, xn, yn))
+	equidistant_crop_roi = imp.getRoi()
+	mask.setRoi(equidistant_crop_roi)
+	mask_cropped = mask.crop()
+	IJ.run(mask_cropped, "Rotate... ",
+	       "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
+	hist = mask_cropped.getProcessor().getHistogram()
+	triag_threshold = Auto_Threshold.Triangle(hist)
+	mask_cropped.getProcessor().setThreshold(
+		triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
+	IJ.run(mask_cropped, "Convert to Mask", "")
+
+	# Extract the precise embryo center in the rotated cropped image
+	roim = RoiManager(False)
+	MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
+	MAX_PARTICLE_SIZE = float("inf")
+	ParticleAnalyzer.setRoiManager(roim)
+	pa = ParticleAnalyzer(
+            ParticleAnalyzer.ADD_TO_MANAGER,
+            Measurements.ELLIPSE,
+            table,
+            MIN_PARTICLE_SIZE,
+            MAX_PARTICLE_SIZE
+        )
+	pa.analyze(mask_cropped)
+	roi_arr = roim.getRoisAsArray()
+	mask_cropped.setRoi(roi_arr[len(roi_arr) - 1])
+	roim.runCommand('reset')
+	IJ.run(mask_cropped, "Select Bounding Box (guess background color)", "")
+	cropped_bounding_roi = mask_cropped.getRoi()
+	embryo_length = cropped_bounding_roi.getBounds().width
+	embryo_cropped_rot_center_x = cropped_bounding_roi.getContourCentroid()[0]
+	embryo_cropped_rot_center_y = cropped_bounding_roi.getContourCentroid()[1]
+	# Transform the embryo center coordinates with the inverse rotation
+	rad_angle = math.radians(-rot_angle)
+	# switch to coordinates with origin in the cropped image center.
+	xC = embryo_cropped_rot_center_x - Wn / 2
+	yC = embryo_cropped_rot_center_y - Hn / 2
+	embryo_cropped_center_x = xC * \
+		math.cos(rad_angle) - yC * math.sin(rad_angle)
+	embryo_cropped_center_y = xC * \
+		math.sin(rad_angle) + yC * math.cos(rad_angle)
+	embryo_cropped_center_x += Wn / 2
+	embryo_cropped_center_y += Hn / 2
+	# Transform the embryo center coordinates to reverse cropping
+	embryo_center_x = embryo_cropped_center_x + xn
+	embryo_center_y = embryo_cropped_center_y + yn
+	logging.info("\tEmbryo center: (%s, %s)" % (embryo_center_x, embryo_center_y))
+	box_minimum_width = max(embryo_length, MINIMUM_CROP_BOX_WIDTH)
+
+
+	box_width = min(DEFAULT_CROP_BOX_WIDTH, dataset_maximal_crop_box_width)
+	if use_dataset_box_width == True:
+		logging.info("\tUsing dataset's global value of the crop box width: %s to create the crop template" %
+		             dataset_maximal_crop_box_width)
+	IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
+	       (box_width, embryo_center_x, embryo_center_y))
+	roim.runCommand('reset')
+	bounding_roi = imp.getRoi()
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
 
 	# Check if the rotated bounding box extend over the image
@@ -757,7 +823,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 		while box_width >= box_minimum_width:
 			imp.deleteRoi()
 			IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
-                            (box_width, bounding_center_x, bounding_center_y))
+                            (box_width, embryo_center_x, embryo_center_y))
 			bounding_roi = imp.getRoi()
 			# TODO: Find a better way to find angle of rotation of the box
 			if rot_angle > 135:
