@@ -28,6 +28,7 @@ from ij.plugin import RoiRotator
 from ij.plugin import ZProjector
 from ij.plugin import Slicer
 from ij.plugin import StackCombiner
+from ij.process import ByteProcessor
 
 #TODO:
 #	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75))
@@ -705,10 +706,19 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
 	IJ.run(mask, "Convert to Mask", "")
 	# Repeated Erosion and Dilation to remove dirt, which shows as protrusions on the embryo mask
-	IJ.run(mask, "Options...", "iterations=40 count=2 black pad do=Erode")
-	IJ.run(mask, "Options...", "iterations=40 count=2 black pad do=Dilate")
-	IJ.run(mask, "Options...", "iterations=40 count=3 black pad do=Erode")
-	IJ.run(mask, "Options...", "iterations=40 count=3 black pad do=Dilate")
+	# Using IJ.run() for erosion and dilation has some persistent state after run
+	# that produces inconsistent behaviour and bugs
+	# This is why I am using ByteProcessor methods directly
+	bt = mask.getProcessor().convertToByteProcessor()
+	for i in range(40):
+		bt.erode(2, 0)
+	for i in range(40):
+		bt.dilate(2, 0)
+	for i in range(40):
+		bt.erode(3, 0)
+	for i in range(40):
+		bt.dilate(3, 0)
+	mask.setProcessor(bt)
 	table = ResultsTable()
 	# Initialise without display (boolean value is ignored)
 	roim = RoiManager(False)
@@ -854,7 +864,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	roim.select(0)
 	roim.runCommand("Save", os.path.join(meta_dir, "crop_template.roi"))
 	# This crops by a unrotated bounding box created around the rotated selection box
-	final_imp = imp.crop # so later, when we rotate and crop again there will be no blacked corners in the image.
+	final_imp = imp.crop() # so later, when we rotate and crop again there will be no blacked corners in the image.
 	IJ.run(final_imp, "Select All", "")
 	IJ.run(final_imp, "Rotate... ", "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
 	final_center_x = final_imp.getWidth() / 2
