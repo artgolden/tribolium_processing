@@ -941,7 +941,7 @@ def crop_stack_by_template(stack, crop_template, dataset):
 	IJ.run(cropped_stack, "Select All", "")
 
 	IJ.run(cropped_stack, "Rotate... ",
-			"angle=%s grid=1 interpolation=Bilinear stack" % int(round(get_polygon_roi_angle(crop_template), ndigits=1)))
+			"angle=%s grid=1 interpolation=Bilinear stack" % round(get_polygon_roi_angle(crop_template), ndigits=1))
 	final_center_x = cropped_stack.getWidth() / 2
 	final_center_y = cropped_stack.getHeight() / 2
 	box_width = get_rotated_rect_roi_width(crop_template)
