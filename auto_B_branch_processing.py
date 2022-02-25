@@ -41,42 +41,42 @@ from ij.plugin import StackCombiner
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
 {
-    "datasets": [
-        {
-            "ID": 1,
-            "channel_1": {
-                "specimens_for_directions_1234": [
-                5,
-                6,
-                4,
-                7
-                ]                
-            },
-            "head_direction": "right",
-            "use_manual_bounding_box": false
-        },
-        {
-            "ID": 3,
-            "channel_1": {
-                "specimens_for_directions_1234": [
-                    5,
-                    6,
-                    4,
-                    7
-                ]
-            },
-            "channel_2": {
-                "specimens_for_directions_1234": [
-                    0,
-                    2,
-                    1,
-                    3
-                ]
-            },
-            "head_direction": "left",
-            "use_manual_bounding_box": false
-        }
-    ]
+	"datasets": [
+		{
+			"ID": 1,
+			"channel_1": {
+				"specimens_for_directions_1234": [
+				5,
+				6,
+				4,
+				7
+				]				
+			},
+			"head_direction": "right",
+			"use_manual_bounding_box": false
+		},
+		{
+			"ID": 3,
+			"channel_1": {
+				"specimens_for_directions_1234": [
+					5,
+					6,
+					4,
+					7
+				]
+			},
+			"channel_2": {
+				"specimens_for_directions_1234": [
+					0,
+					2,
+					1,
+					3
+				]
+			},
+			"head_direction": "left",
+			"use_manual_bounding_box": false
+		}
+	]
 }"""
 
 METADATA_DIR_NAME = "(B1)-Metadata"
@@ -121,12 +121,12 @@ class FredericFile:
 
 	def get_name(self):
 		return "%s-DS%sTP%sDR%sCH%sPL%s.%s" % (self.dataset_name,
-                                         self.dataset_id,
-                                         self.time_point,
-                                         self.direction,
-                                         self.channel,
-                                         self.plane,
-                                         self.extension)
+										 self.dataset_id,
+										 self.time_point,
+										 self.direction,
+										 self.channel,
+										 self.plane,
+										 self.extension)
 
 
 def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
@@ -155,10 +155,10 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 	now = datetime.now()
 	dt_string = now.strftime("%Y-%b-%d-%H%M%S")
 	logging.basicConfig(filename=os.path.join(datasets_dir, "%s-sort_rename.log" % dt_string),
-                     filemode='w',
-                     format='%(asctime)s-%(levelname)s - %(message)s',
-                     datefmt='%d-%b-%y %H:%M:%S',
-                     level=logging.INFO)
+					 filemode='w',
+					 format='%(asctime)s-%(levelname)s - %(message)s',
+					 datefmt='%d-%b-%y %H:%M:%S',
+					 level=logging.INFO)
 
 	# Check metadata file for correctness
 	for dataset in datasets_meta["datasets"]:
@@ -253,7 +253,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		meta_dir = os.path.join(root_dataset_dir, METADATA_DIR_NAME)
 		meta_d_dirs = make_directions_dirs(os.path.join(meta_dir, chan_dir_name))
 		tstack_dataset_dirs = make_directions_dirs(
-                    os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
+					os.path.join(root_dataset_dir, TSTACKS_DIR_NAME, chan_dir_name))
 		raw_cropped_dirs = make_directions_dirs(os.path.join(
 			root_dataset_dir, RAW_CROPPED_DIR_NAME, chan_dir_name))
 		# Loop one time over all dimensions in channel 1 to determine the dataset_maximal_crop_box_width
@@ -263,13 +263,13 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			logging.info("\tChannel: %s Direction: %s In the loop over directions. This iteration operating on the following directories:" % (
 				channel, direction))
 			logging.info("\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n\t\t\t\t\t\t%s\n" %
-			             (raw_dir, tstack_dir, m_dir))
+						 (raw_dir, tstack_dir, m_dir))
 
 			tstack_backup_dir = os.path.join(tstack_dir, "uncropped_backup")
 			if not os.path.exists(tstack_backup_dir):
 				os.mkdir(tstack_backup_dir)
 			logging.info("\tChannel: %s Direction: %s Creating a stack of max Z-projections from raw stack." %
-			             (channel, direction))
+						 (channel, direction))
 			mproj_stack_file_name = get_tiff_name_from_dir(raw_dir)
 			mproj_stack_file_name.plane = "(ZM)"
 			mproj_stack_file_name.time_point = "(TS)"
@@ -413,7 +413,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
 					raw_stack = IJ.openImage(raw_stack_file_name)
 					IJ.run(raw_stack, "Properties...",
-                                            "frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
+											"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 					raw_stack_cropped = crop_stack_by_template(
 						raw_stack, crop_template, dataset)
 					if i == 0:
@@ -429,7 +429,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 							os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
 							break
 						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
-						             (channel, direction, planes_kept))
+									 (channel, direction, planes_kept))
 					raw_stack_cropped = reset_img_properties(raw_stack_cropped, voxel_depth=4)
 					raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
 					save_copressed_tiff(raw_stack_cropped, os.path.join(
@@ -444,8 +444,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					montage_stack = imp_stack.getStack()
 					montage_stack_name = get_tiff_name_from_dir(contr_dir)
 				if i > 0:
-					montage_stack = StackCombiner.combineHorizontally(StackCombiner(),
-                                                       montage_stack, imp_stack.getStack())
+					montage_stack = StackCombiner.combineHorizontally(StackCombiner(), montage_stack, imp_stack.getStack())
 			montage_stack_name.direction = "(MT)"
 			montage_stack = ImagePlus("montage", montage_stack)
 			montage_dir = os.path.join(root_dataset_dir, MONTAGE_DIR_NAME)
@@ -558,18 +557,17 @@ def move_files(raw_images_dir, specimen_directions_in_channels, dataset_id, data
 		image_channel = specimens_info[specimen]["channel"]
 		embryo_direction = specimens_info[specimen]["direction"]
 		new_file_name = "%sDS%04dTP%04dDR%04dCH%04dPL(ZS).tif" % (dataset_name_prefix,
-                                                            dataset_id,
-                                                            time_point,
-                                                            embryo_direction,
-                                                            image_channel)
+															dataset_id,
+															time_point,
+															embryo_direction,
+															image_channel)
 		os.rename(file_path, os.path.join(
 			direction_dirs[embryo_direction - 1], new_file_name))
 		logging.info("New file \n%s\n Full path:\n%s\n Original name: \n%s\n Original path: \n%s\n" % (new_file_name,
-                                                                                                 os.path.join(
-                                                                                                     direction_dirs[embryo_direction - 1], new_file_name),
-                                                                                                 file_name,
-                                                                                                 file_path)
-               )
+																								 os.path.join(
+																									 direction_dirs[embryo_direction - 1], new_file_name),
+																								 file_name,
+																								 file_path))
 
 
 def is_specimen_input_valid(specimens_per_direction):
@@ -718,12 +716,11 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	MAX_PARTICLE_SIZE = float("inf")
 	ParticleAnalyzer.setRoiManager(roim)
 	pa = ParticleAnalyzer(
-            ParticleAnalyzer.ADD_TO_MANAGER,
-            Measurements.ELLIPSE,
-            table,
-            MIN_PARTICLE_SIZE,
-            MAX_PARTICLE_SIZE
-        )
+			ParticleAnalyzer.ADD_TO_MANAGER,
+			Measurements.ELLIPSE,
+			table,
+			MIN_PARTICLE_SIZE,
+			MAX_PARTICLE_SIZE)
 	pa.analyze(mask)
 	rot_angle = round(table.getValue("Angle", 0), ndigits=1)
 	# TODO: Find a better way to find angle of rotation of the box
@@ -754,15 +751,13 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	yn = j - min(ay, by)
 	Wn = We + 2 * min(ax, bx)
 	Hn = He + 2 * min(ay, by)
-	IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s" %
-	       (Wn, Hn, xn, yn))
+	IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s" % (Wn, Hn, xn, yn))
 	equidistant_crop_roi = imp.getRoi()
 	mask.setRoi(equidistant_crop_roi)
 	mask_cropped = mask.crop()
 	# For some reason cropping a mask does not produce a proper binarized image (it is gray if you view it), 
 	# So I had to redo the thresholding
-	IJ.run(mask_cropped, "Rotate... ",
-	       "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
+	IJ.run(mask_cropped, "Rotate... ", "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
 	hist = mask_cropped.getProcessor().getHistogram()
 	triag_threshold = Auto_Threshold.Triangle(hist)
 	mask_cropped.getProcessor().setThreshold(
@@ -777,12 +772,11 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	# For some reason ParticleAnalyzer cannot be run without reinitialization,
 	# that's why repeating it here
 	pa = ParticleAnalyzer(
-            ParticleAnalyzer.ADD_TO_MANAGER,
-            Measurements.ELLIPSE,
-            table,
-            MIN_PARTICLE_SIZE,
-            MAX_PARTICLE_SIZE
-        )
+			ParticleAnalyzer.ADD_TO_MANAGER,
+			Measurements.ELLIPSE,
+			table,
+			MIN_PARTICLE_SIZE,
+			MAX_PARTICLE_SIZE)
 	pa.analyze(mask_cropped)
 	roi_arr = roim.getRoisAsArray()
 	mask_cropped.setRoi(roi_arr[len(roi_arr) - 1])
@@ -813,9 +807,8 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	box_width = min(DEFAULT_CROP_BOX_WIDTH, dataset_maximal_crop_box_width)
 	if use_dataset_box_width == True:
 		logging.info("\tUsing dataset's global value of the crop box width: %s to create the crop template" %
-		             dataset_maximal_crop_box_width)
-	IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
-	       (box_width, embryo_center_x, embryo_center_y))
+					 dataset_maximal_crop_box_width)
+	IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" % (box_width, embryo_center_x, embryo_center_y))
 	roim.runCommand('reset')
 	bounding_roi = imp.getRoi()
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
@@ -831,7 +824,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 		while box_width >= box_minimum_width:
 			imp.deleteRoi()
 			IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
-                            (box_width, embryo_center_x, embryo_center_y))
+							(box_width, embryo_center_x, embryo_center_y))
 			bounding_roi = imp.getRoi()
 			# TODO: Find a better way to find angle of rotation of the box
 			if rot_angle > 135:
@@ -861,15 +854,13 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	roim.select(0)
 	roim.runCommand("Save", os.path.join(meta_dir, "crop_template.roi"))
 	# This crops by a unrotated bounding box created around the rotated selection box
-	final_imp = imp.crop()
-   # so later, when we rotate and crop again there will be no blacked corners in the image.
+	final_imp = imp.crop # so later, when we rotate and crop again there will be no blacked corners in the image.
 	IJ.run(final_imp, "Select All", "")
-	IJ.run(final_imp, "Rotate... ",
-	       "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
+	IJ.run(final_imp, "Rotate... ", "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
 	final_center_x = final_imp.getWidth() / 2
 	final_center_y = final_imp.getHeight() / 2
 	IJ.run(final_imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
-            (box_width, final_center_x, final_center_y))
+			(box_width, final_center_x, final_center_y))
 	cropped_max_time_proj = final_imp.crop()
 	if dataset["head_direction"] == "left":
 		IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Right", "")
@@ -904,7 +895,7 @@ def get_polygon_roi_angle(roi):
 	if angle < -135:
 		angle = 180 - angle
 	logging.info("\tBounding box x-coord:%s, y-coord:%s, rot-angle:%s" %
-	             (roi.getPolygon().xpoints, roi.getPolygon().ypoints, angle))
+				 (roi.getPolygon().xpoints, roi.getPolygon().ypoints, angle))
 	return angle
 
 
@@ -940,12 +931,11 @@ def crop_stack_by_template(stack, crop_template, dataset):
 	IJ.run(cropped_stack, "Select All", "")
 
 	IJ.run(cropped_stack, "Rotate... ",
-            "angle=%s grid=1 interpolation=Bilinear stack" % int(round(get_polygon_roi_angle(crop_template))))
+			"angle=%s grid=1 interpolation=Bilinear stack" % int(round(get_polygon_roi_angle(crop_template))))
 	final_center_x = cropped_stack.getWidth() / 2
 	final_center_y = cropped_stack.getHeight() / 2
 	box_width = get_rotated_rect_roi_width(crop_template)
-	IJ.run(cropped_stack, "Specify...", "width=%s height=600 x=%s y=%s centered" %
-	       (box_width, final_center_x, final_center_y))
+	IJ.run(cropped_stack, "Specify...", "width=%s height=600 x=%s y=%s centered" % (box_width, final_center_x, final_center_y))
 	cropped_stack_resized = cropped_stack.crop("stack")
 
 	if dataset["head_direction"] == "left":
@@ -969,7 +959,7 @@ def find_planes_to_keep(zstack, meta_dir):
 		(int, int): (start_plane, stop_plane) ends have to be included.
 	"""
 	IJ.run(zstack, "Properties...",
-            "pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
+			"pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 
 	# This variant of implementation does not recalculate the pixel values and does not expand the image.
 	# So later, when we convert to mask, the image will be number_of_planes in height, and not 4*number_of_planes
@@ -996,12 +986,11 @@ def find_planes_to_keep(zstack, meta_dir):
 	MAX_PARTICLE_SIZE = float("inf")
 	ParticleAnalyzer.setRoiManager(roim)
 	pa = ParticleAnalyzer(
-            ParticleAnalyzer.ADD_TO_MANAGER,
-            Measurements.RECT,
-            table,
-            MIN_PARTICLE_SIZE,
-            MAX_PARTICLE_SIZE
-        )
+			ParticleAnalyzer.ADD_TO_MANAGER,
+			Measurements.RECT,
+			table,
+			MIN_PARTICLE_SIZE,
+			MAX_PARTICLE_SIZE)
 	pa.analyze(max_proj_reslice)
 	box_start = table.getValue("BY", 0)
 	box_width = table.getValue("Height", 0)
@@ -1023,7 +1012,7 @@ def find_planes_to_keep(zstack, meta_dir):
 		start_plane = zstack.getNSlices() - 149
 	logging.info("\t selected planes to keep: %s-%s" % (start_plane, end_plane))
 	logging.info("\t Cropping Y-projection for user assessment with %s planes" %
-	             for_user_asessment.getNSlices())
+				 for_user_asessment.getNSlices())
 
 	# Save cropped Y-projection for user assessment
 	for_user_asessment = subset_planes(
@@ -1093,8 +1082,7 @@ def auto_contrast(image):
 	triag_threshold = Auto_Threshold.Triangle(hist)
 	num_overexposed_pixels = 0
 	upper_threshold = 10000
-	sum_elem_above_threshold = sum(hist[i]
-	                               for i in range(triag_threshold, len(hist)))
+	sum_elem_above_threshold = sum(hist[i] for i in range(triag_threshold, len(hist)))
 
 	# making it so 1% of all pixels will be overexposed
 	num_overexposed_pixels_threshold = 0.01 * sum_elem_above_threshold
@@ -1127,8 +1115,7 @@ def save_copressed_tiff(image, path):
 		fs = FileSaver(image)
 		fs.saveAsTiff(path)
 	else:
-		IJ.run(image, "Bio-Formats Exporter",
-	       "save=%s export compression=zlib" % path)
+		IJ.run(image, "Bio-Formats Exporter", "save=%s export compression=zlib" % path)
 
 
 if __name__ in ['__builtin__', '__main__']:
