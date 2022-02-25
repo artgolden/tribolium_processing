@@ -3,7 +3,7 @@
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.2.22 :)
+# Last manual update of this line 2022.2.25 :)
 
 from distutils.dir_util import mkpath
 import math
@@ -90,7 +90,7 @@ DATASET_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
 DATASET_FINISHED_FILE_NAME = "B_BRANCH_FINISHED"
 DATASET_ACTIVE_FILE_NAME = "B_BRANCH_ACTIVE"
 
-DO_NOT_COMPRESS_ON_SAVE = False
+DO_NOT_COMPRESS_ON_SAVE = False # Used for debugging
 
 DEFAULT_CROP_BOX_WIDTH = 1100
 MINIMUM_CROP_BOX_WIDTH = 1000
@@ -703,6 +703,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	triag_threshold = Auto_Threshold.Triangle(hist)
 	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
 	IJ.run(mask, "Convert to Mask", "")
+	# Repeated Erosion and Dilation to remove dirt, which shows as protrusions on the embryo mask
 	IJ.run(mask, "Options...", "iterations=40 count=2 black pad do=Erode")
 	IJ.run(mask, "Options...", "iterations=40 count=2 black pad do=Dilate")
 	IJ.run(mask, "Options...", "iterations=40 count=3 black pad do=Erode")
@@ -755,6 +756,8 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	equidistant_crop_roi = imp.getRoi()
 	mask.setRoi(equidistant_crop_roi)
 	mask_cropped = mask.crop()
+	# For some reason cropping a mask does not produce a proper binarized image (it is gray if you view it), 
+	# So I had to redo the thresholding
 	IJ.run(mask_cropped, "Rotate... ",
 	       "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
 	hist = mask_cropped.getProcessor().getHistogram()
@@ -768,6 +771,8 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
 	MAX_PARTICLE_SIZE = float("inf")
 	ParticleAnalyzer.setRoiManager(roim)
+	# For some reason ParticleAnalyzer cannot be run without reinitialization,
+	# that's why repeating it here
 	pa = ParticleAnalyzer(
             ParticleAnalyzer.ADD_TO_MANAGER,
             Measurements.ELLIPSE,
