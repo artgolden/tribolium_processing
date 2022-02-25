@@ -155,7 +155,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 
 	now = datetime.now()
 	dt_string = now.strftime("%Y-%b-%d-%H%M%S")
-	logging.basicConfig(filename=os.path.join(datasets_dir, "%s-sort_rename.log" % dt_string),
+	logging.basicConfig(filename=os.path.join(datasets_dir, "%s-b_branch.log" % dt_string),
 					 filemode='w',
 					 format='%(asctime)s-%(levelname)s - %(message)s',
 					 datefmt='%d-%b-%y %H:%M:%S',
@@ -941,7 +941,7 @@ def crop_stack_by_template(stack, crop_template, dataset):
 	IJ.run(cropped_stack, "Select All", "")
 
 	IJ.run(cropped_stack, "Rotate... ",
-			"angle=%s grid=1 interpolation=Bilinear stack" % int(round(get_polygon_roi_angle(crop_template))))
+			"angle=%s grid=1 interpolation=Bilinear stack" % int(round(get_polygon_roi_angle(crop_template), ndigits=1)))
 	final_center_x = cropped_stack.getWidth() / 2
 	final_center_y = cropped_stack.getHeight() / 2
 	box_width = get_rotated_rect_roi_width(crop_template)
