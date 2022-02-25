@@ -307,6 +307,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 				skip_the_dataset = True
 				open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
+				os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
 				break
 			fs = FileSaver(cropped_max_time_proj)
 			fs.saveAsTiff(os.path.join(
@@ -381,6 +382,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 						"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 					skip_the_dataset = True
 					open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
+					os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
 					break
 				fs = FileSaver(cropped_max_time_proj)
 				fs.saveAsTiff(os.path.join(
@@ -424,6 +426,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 								channel, direction, e))
 							skip_the_dataset = True
 							open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
+							os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
 							break
 						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
 						             (channel, direction, planes_kept))
