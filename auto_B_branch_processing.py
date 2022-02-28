@@ -1,6 +1,8 @@
 # @ File(label='Choose a directory with datasets', style='directory') datasets_dir
 # @ File(label='Choose a file with metadata about embryo directions', style='file') metadata_file
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
+# @ Boolean (label='Compress images?', value=true) compress_on_save
+# @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 # Last manual update of this line 2022.2.28 :)
@@ -91,13 +93,12 @@ DATASET_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
 DATASET_FINISHED_FILE_NAME = "B_BRANCH_FINISHED"
 DATASET_ACTIVE_FILE_NAME = "B_BRANCH_ACTIVE"
 
-DO_NOT_COMPRESS_ON_SAVE = False # Used for debugging
 
 DEFAULT_CROP_BOX_WIDTH = 1100
 MINIMUM_CROP_BOX_WIDTH = 1000
 
 # Percentage of overexposed pixels during histogram contrast adjustment
-PERCENT_OVEREXPOSED_PIXELS = 1
+# PERCENT_OVEREXPOSED_PIXELS = 1
 
 
 class FredericFile:
@@ -1144,7 +1145,7 @@ def adjust_histogram_stack(imp_stack):
 def save_copressed_tiff(image, path):
 	if os.path.exists(path):
 		os.remove(path)
-	if DO_NOT_COMPRESS_ON_SAVE == True:
+	if compress_on_save == False:
 		fs = FileSaver(image)
 		fs.saveAsTiff(path)
 	else:
