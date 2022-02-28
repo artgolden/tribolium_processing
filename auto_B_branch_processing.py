@@ -2,6 +2,7 @@
 # @ File(label='Choose a file with metadata about embryo directions', style='file') metadata_file
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 # @ Boolean (label='Compress images?', value=true) compress_on_save
+# @ Boolean (label='Use previously cropped stacks (if present)?', value=false) use_cropped_cache
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
@@ -406,16 +407,23 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				fs.saveAsTiff(os.path.join(
 					m_dir, "cropped_max_time_proj.tif"))
 
-				logging.info("\tChannel: %s Direction: %s Cropping a stack of max projections." % (
-					channel, direction))
 				cropped_tstack_file_name = get_tiff_name_from_dir(
 					raw_dir)
 				cropped_tstack_file_name.time_point = "(TS)"
 				cropped_tstack_file_name.plane = "(ZM)"
-				cropped_tstack = crop_stack_by_template(
-					max_proj_stack, crop_template, dataset)
-				save_copressed_tiff(cropped_tstack, os.path.join(
-					tstack_dir, cropped_tstack_file_name.get_name()))
+				if not use_cropped_cache or not os.path.exists(os.path.join(tstack_dir, cropped_tstack_file_name.get_name())):
+					logging.info("\tChannel: %s Direction: %s Cropping a stack of max projections." % (
+						channel, direction))
+					cropped_tstack = crop_stack_by_template(
+						max_proj_stack, crop_template, dataset)
+					save_copressed_tiff(cropped_tstack, os.path.join(
+						tstack_dir, cropped_tstack_file_name.get_name()))
+				else:
+					logging.info("\tChannel: %s Direction: %s Found existing cropped max projected stacks. Using them." % (
+                                                channel, direction))
+					cropped_tstack = IJ.openImage(os.path.join(
+                                            tstack_dir, cropped_tstack_file_name.get_name()))
+					
 
 				logging.info("\tChannel: %s Direction: %s Creating histogram adjusted stacks of max projections." % (
 					channel, direction))
@@ -425,39 +433,44 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				save_copressed_tiff(cropped_adjusted_tstack, os.path.join(
 					contr_dir, cropped_adjusted_tstack_name.get_name()))
 
-				logging.info(
-					"\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
-				planes_kept = (0, 0)
-				ntime_points = len(get_tiffs_in_directory(raw_dir))
-				for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
-					raw_stack = IJ.openImage(raw_stack_file_name)
-					IJ.run(raw_stack, "Properties...",
-											"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
-					raw_stack_cropped = crop_stack_by_template(
-						raw_stack, crop_template, dataset)
-					if i == 0:
-						logging.info("\tChannel: %s Direction: %s Finding which planes to keep in raw image stacks." % (
-							channel, direction))
-						try:
-							planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
-						except Exception as e:
-							logging.info("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
-								channel, direction, e))
-							print("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
-								channel, direction, e))
-							skip_the_dataset = True
-							open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
-							os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
-							print("Encountered an exception while trying to find which planes to keep. Skipping the dataset.")
-							break
-						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
-									 (channel, direction, planes_kept))
+				raw_cropped_name = get_tiff_name_from_dir(raw_dir)
+				if not use_cropped_cache or not os.path.exists(os.path.join(raw_cropped_dir, raw_cropped_name.get_name())):
 					logging.info(
-						"\tChannel: %s Direction: %s Cropping Raw stack for timepoint: %s/%s" % (channel, direction, i + 1, ntime_points))
-					raw_stack_cropped = reset_img_properties(raw_stack_cropped, voxel_depth=4)
-					raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
-					save_copressed_tiff(raw_stack_cropped, os.path.join(
-						raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
+						"\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
+					planes_kept = (0, 0)
+					ntime_points = len(get_tiffs_in_directory(raw_dir))
+					for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
+						raw_stack = IJ.openImage(raw_stack_file_name)
+						IJ.run(raw_stack, "Properties...",
+												"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
+						raw_stack_cropped = crop_stack_by_template(
+							raw_stack, crop_template, dataset)
+						if i == 0:
+							logging.info("\tChannel: %s Direction: %s Finding which planes to keep in raw image stacks." % (
+								channel, direction))
+							try:
+								planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
+							except Exception as e:
+								logging.info("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
+									channel, direction, e))
+								print("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
+									channel, direction, e))
+								skip_the_dataset = True
+								open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
+								os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
+								print("Encountered an exception while trying to find which planes to keep. Skipping the dataset.")
+								break
+							logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
+										(channel, direction, planes_kept))
+						logging.info(
+							"\tChannel: %s Direction: %s Cropping Raw stack for timepoint: %s/%s" % (channel, direction, i + 1, ntime_points))
+						raw_stack_cropped = reset_img_properties(raw_stack_cropped, voxel_depth=4)
+						raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
+						save_copressed_tiff(raw_stack_cropped, os.path.join(
+							raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
+				else:
+					logging.info("\tChannel: %s Direction: %s Found existing cropped raw stacks, using them." % (
+                                            channel, direction))
 			montage_stack = ImagePlus()
 			montage_stack_name = None
 			for i, contr_dir in enumerate(contrast_dirs):
