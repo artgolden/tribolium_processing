@@ -3,7 +3,7 @@
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.2.25 :)
+# Last manual update of this line 2022.2.28 :)
 
 from distutils.dir_util import mkpath
 import math
@@ -95,6 +95,9 @@ DO_NOT_COMPRESS_ON_SAVE = False # Used for debugging
 
 DEFAULT_CROP_BOX_WIDTH = 1100
 MINIMUM_CROP_BOX_WIDTH = 1000
+
+# Percentage of overexposed pixels during histogram contrast adjustment
+PERCENT_OVEREXPOSED_PIXELS = 1
 
 
 class FredericFile:
@@ -206,6 +209,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		if not raw_images_dir:
 			print("Exiting.")
 			exit(1)
+	logging.info("Checked metadata file. No errors found.")
 
 	for dataset in datasets_meta["datasets"]:
 		skip_the_dataset = False
@@ -217,21 +221,29 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				specimen_directions_in_channels.append(
 					tuple(dataset[channel]["specimens_for_directions_1234"]))
 		specimen_directions_in_channels = tuple(specimen_directions_in_channels)
-
-		logging.info("Started processing dataset: DS%04d" % dataset_id)
+		
+		logging.info("\n%s\nStarted processing dataset: DS%04d \n%s\n" %
+		             ("#" * 100, dataset_id, "#" * 100))
+		print("Started processing dataset: DS%04d" % dataset_id)
 		raw_images_dir = get_raw_images_dir(datasets_dir, dataset_id)
 		root_dataset_dir = os.path.split(raw_images_dir)[0]
 		if os.path.exists(os.path.join(root_dataset_dir, DATASET_FINISHED_FILE_NAME)):
 			logging.info(
 				"Found %s file. Dataset DS%04d already processed, skipping." % (DATASET_FINISHED_FILE_NAME, dataset_id))
+			print("Found %s file. Dataset DS%04d already processed, skipping." %
+			      (DATASET_FINISHED_FILE_NAME, dataset_id))
 			continue
 		if os.path.exists(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME)):
 			logging.info(
 				"Found %s file. Dataset DS%04d errored while previous processing, skipping." % (DATASET_ERROR_FILE_NAME, dataset_id))
+			print("Found %s file. Dataset DS%04d errored while previous processing, skipping." %
+			      (DATASET_ERROR_FILE_NAME, dataset_id))
 			continue
 		if os.path.exists(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME)):
 			logging.info(
 				"Found %s file. Perhaps the dataset DS%04d is currently being processed by other Fiji instance, skipping." % (DATASET_ACTIVE_FILE_NAME, dataset_id))
+			print("Found %s file. Perhaps the dataset DS%04d is currently being processed by other Fiji instance, skipping." %
+			      (DATASET_ACTIVE_FILE_NAME, dataset_id))
 			continue
 		open(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME), 'a').close()
 
@@ -240,6 +252,8 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			move_files(
 				raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix)
 		except ValueError as e:
+			logging.info(
+				"Error while moving files for the dataset:\"%s\", skipping the dataset. Error:\n %s" % (dataset_id, e))
 			print("Error while moving files for the dataset:\"%s\", skipping the dataset." % dataset_id)
 			print(e)
 			continue
@@ -306,6 +320,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			except Exception as e:
 				logging.info(
 					"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
+				print("ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 				skip_the_dataset = True
 				open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
 				os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
@@ -381,6 +396,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				except Exception as e:
 					logging.info(
 						"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
+					print("ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 					skip_the_dataset = True
 					open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
 					os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
@@ -411,6 +427,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				logging.info(
 					"\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
 				planes_kept = (0, 0)
+				ntime_points = len(get_tiffs_in_directory(raw_dir))
 				for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
 					raw_stack = IJ.openImage(raw_stack_file_name)
 					IJ.run(raw_stack, "Properties...",
@@ -423,14 +440,19 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 						try:
 							planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
 						except Exception as e:
-							logging.info("\tChannel: %s Direction: Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
+							logging.info("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
+								channel, direction, e))
+							print("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
 								channel, direction, e))
 							skip_the_dataset = True
 							open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
 							os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
+							print("Encountered an exception while trying to find which planes to keep. Skipping the dataset.")
 							break
 						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
 									 (channel, direction, planes_kept))
+					logging.info(
+						"\tChannel: %s Direction: %s Cropping Raw stack for timepoint: %s/%s" % (channel, direction, i + 1, ntime_points))
 					raw_stack_cropped = reset_img_properties(raw_stack_cropped, voxel_depth=4)
 					raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
 					save_copressed_tiff(raw_stack_cropped, os.path.join(
@@ -459,6 +481,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		open(os.path.join(root_dataset_dir, DATASET_FINISHED_FILE_NAME), 'a').close()
 		os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
 		logging.info("Finished processing dataset DS%04d successfully." % dataset_id)
+		print("Finished processing dataset DS%04d successfully." % dataset_id)
 
 	logging.info("Finished processing all datasets.")
 	print("Finished processing all datasets.")
@@ -904,8 +927,8 @@ def get_polygon_roi_angle(roi):
 		angle = angle - 180
 	if angle < -135:
 		angle = 180 - angle
-	logging.info("\tBounding box x-coord:%s, y-coord:%s, rot-angle:%s" %
-				 (roi.getPolygon().xpoints, roi.getPolygon().ypoints, angle))
+	# logging.info("\tBounding box x-coord:%s, y-coord:%s, rot-angle:%s" %
+	# 			 (roi.getPolygon().xpoints, roi.getPolygon().ypoints, angle))
 	return angle
 
 
@@ -917,7 +940,7 @@ def get_rotated_rect_roi_width(roi):
 	width = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 	# logging.info("Determined rectangular roi width before rounding: %s" % width)
 	width = round(width / 10) * 10
-	logging.info("\tRectangular roi width: %s" % width)
+	# logging.info("\tRectangular roi width: %s" % width)
 	return width
 
 
@@ -1095,7 +1118,7 @@ def auto_contrast(image):
 	sum_elem_above_threshold = sum(hist[i] for i in range(triag_threshold, len(hist)))
 
 	# making it so 1% of all pixels will be overexposed
-	num_overexposed_pixels_threshold = 0.01 * sum_elem_above_threshold
+	num_overexposed_pixels_threshold = PERCENT_OVEREXPOSED_PIXELS / 100 * sum_elem_above_threshold
 	for i, num_pixels_with_this_value in reversed(list(enumerate(hist))):
 		num_overexposed_pixels += num_pixels_with_this_value
 		if num_overexposed_pixels > num_overexposed_pixels_threshold:
