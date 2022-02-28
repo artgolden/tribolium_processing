@@ -16,6 +16,7 @@ import fnmatch
 import json
 import logging
 from datetime import datetime
+import traceback
 
 from java.io import File
 from ij.io import FileSaver
@@ -262,7 +263,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		logging.info("\tFiles arranged, starting processing.")
 
 		# We have to make sure that all directions in all channels have the same crop box dimensions.
-		dataset_maximal_crop_box_width = DEFAULT_CROP_BOX_WIDTH
+		dataset_minimal_crop_box_dims = (0, 0)
 		channel = 1
 		chan_dir_name = "CH%04d" % channel
 		raw_images_direction_dirs = make_directions_dirs(
@@ -317,8 +318,8 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (
 				channel, direction))
 			try:
-				crop_template, cropped_max_time_proj, dataset_maximal_crop_box_width = create_crop_template(
-					max_time_proj, m_dir, dataset, dataset_maximal_crop_box_width, use_dataset_box_width=False)
+				crop_template, cropped_max_time_proj, dataset_minimal_crop_box_dims = create_crop_template(
+					max_time_proj, m_dir, dataset, dataset_minimal_crop_box_dims, use_dataset_box_dims=False)
 			except Exception as e:
 				logging.info(
 					"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
@@ -393,9 +394,10 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (
 					channel, direction))
 				try:
-					crop_template, cropped_max_time_proj, dataset_maximal_crop_box_width = create_crop_template(
-						max_time_proj, m_dir, dataset, dataset_maximal_crop_box_width, use_dataset_box_width=True)
+					crop_template, cropped_max_time_proj, dataset_minimal_crop_box_dims = create_crop_template(
+						max_time_proj, m_dir, dataset, dataset_minimal_crop_box_dims, use_dataset_box_dims=True)
 				except Exception as e:
+					traceback.print_exc()
 					logging.info(
 						"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 					print("ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
@@ -713,31 +715,33 @@ def is_polygon_roi_overlapping_image_edges(image, roi):
 	return is_overlapping
 
 
-def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal_crop_box_width, use_dataset_box_width):
+def create_crop_template(max_time_projection, meta_dir, dataset, dataset_minimal_crop_box_dims, use_dataset_box_dims):
 	"""Crop max_time_projection, create crop template .roi object, save it in meta_dir.
 
 	Args:
 		max_time_projection (ImagePlus): a single image of max projection of a time stack of max projections
 		meta_dir (str): full path to metadata dir
 		dataset (dict): metadata about the dataset to extract information about embryo orientation
-		dataset_maximal_crop_box_width (int):
-		use_dataset_box_width (bool):
+		dataset_maximal_crop_box_dims (int, int): width, heigth
+		use_dataset_box_dims (bool):
 
 	Returns:
 		Roi: bounding box around the embryo with proper rotation and size
 		ImagePlus: cropped max time projection
-		int: updated dataset maximal crop box width
+		(int, int): updated dataset maximal crop box dims
 	"""
-	updated_dataset_maximal_crop_box_width = dataset_maximal_crop_box_width
-	IJ.run("Clear Results")
-
+	updated_dataset_maximal_crop_box_dims = dataset_minimal_crop_box_dims
 	imp = max_time_projection
-	ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
 
+	if dataset["use_manual_bounding_box"] == True:
+		pass
+
+
+
+	ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
 	mask = ImagePlus("mask", ip)
 	radius = 4
 	RankFilters().rank(ip, radius, RankFilters.MEDIAN)
-
 	hist = ip.getHistogram()
 	triag_threshold = Auto_Threshold.Triangle(hist)
 	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
@@ -756,6 +760,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	for i in range(40):
 		bt.dilate(3, 0)
 	mask.setProcessor(bt)
+	IJ.run("Clear Results")
 	table = ResultsTable()
 	# Initialise without display (boolean value is ignored)
 	roim = RoiManager(False)
@@ -825,12 +830,15 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 			MIN_PARTICLE_SIZE,
 			MAX_PARTICLE_SIZE)
 	pa.analyze(mask_cropped)
+	table.reset()
 	roi_arr = roim.getRoisAsArray()
 	mask_cropped.setRoi(roi_arr[len(roi_arr) - 1])
 	roim.runCommand('reset')
 	IJ.run(mask_cropped, "Select Bounding Box (guess background color)", "")
 	cropped_bounding_roi = mask_cropped.getRoi()
 	embryo_length = cropped_bounding_roi.getBounds().width
+	embryo_width = cropped_bounding_roi.getBounds().height
+	logging.info("\tEmbryo dims: (%s, %s)" % (embryo_length, embryo_width))
 	embryo_cropped_rot_center_x = cropped_bounding_roi.getContourCentroid()[0]
 	embryo_cropped_rot_center_y = cropped_bounding_roi.getContourCentroid()[1]
 	# Transform the embryo center coordinates with the inverse rotation
@@ -848,66 +856,56 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 	embryo_center_x = embryo_cropped_center_x + xn
 	embryo_center_y = embryo_cropped_center_y + yn
 	logging.info("\tEmbryo center: (%s, %s)" % (embryo_center_x, embryo_center_y))
-	box_minimum_width = max(embryo_length, MINIMUM_CROP_BOX_WIDTH)
 
 
-	box_width = min(DEFAULT_CROP_BOX_WIDTH, dataset_maximal_crop_box_width)
-	if use_dataset_box_width == True:
-		logging.info("\tUsing dataset's global value of the crop box width: %s to create the crop template" %
-					 dataset_maximal_crop_box_width)
-	IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" % (box_width, embryo_center_x, embryo_center_y))
+	if use_dataset_box_dims == True:
+		dataset_width, dataset_height = dataset_minimal_crop_box_dims
+		logging.info("\tUsing dataset's global value of the crop box dims: %s, %s to create the crop template" % (dataset_width, dataset_height))
+		box_width, box_height = dataset_width, dataset_height
+		IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s centered" %
+                    (dataset_width, dataset_height, embryo_center_x, embryo_center_y))
+	else:
+		dataset_width, dataset_height = dataset_minimal_crop_box_dims
+		box_width = embryo_length + 12 + 4 - embryo_length % 4
+		box_height = embryo_width + 12 + 4 - embryo_width % 4
+		box_width = max(box_width, dataset_width)
+		box_height = max(box_height, dataset_height)
+		IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s centered" %
+                    (box_width, box_height, embryo_center_x, embryo_center_y))
+		updated_dataset_maximal_crop_box_dims = (box_width, box_height)
 	roim.runCommand('reset')
 	bounding_roi = imp.getRoi()
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
 
 	# Check if the rotated bounding box extend over the image
 	if is_polygon_roi_overlapping_image_edges(imp, bounding_roi_rot) == True:
-		if use_dataset_box_width == True:
+		if use_dataset_box_dims == True:
 			raise Exception(
 				"Fixed bounding box width for the whole dataset cannot be applied to all dimensions.")
-		logging.info(
-			"\tBox of 1100x600 could not be fitted to the embryo without protruding out of the image. Searching for a smaller box.")
-		box_width -= 10
-		while box_width >= box_minimum_width:
-			imp.deleteRoi()
-			IJ.run(imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
-							(box_width, embryo_center_x, embryo_center_y))
-			bounding_roi = imp.getRoi()
-			# TODO: Find a better way to find angle of rotation of the box
-			if rot_angle > 135:
-				rot_angle = rot_angle - 180
-			if rot_angle < -135:
-				rot_angle = 180 - rot_angle
-			bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
-			if is_polygon_roi_overlapping_image_edges(imp, bounding_roi_rot) == False:
-				logging.info("\tFound a smaller box! Dimensions: %sx600" % box_width)
-				break
-			box_width -= 10
 		else:
 			raise Exception(
 				"Could not find a bounding box that contains whole embryo and does not protrude out of the image.")
-	if use_dataset_box_width == False:
+	if updated_dataset_maximal_crop_box_dims != dataset_minimal_crop_box_dims:
 		# box_width could only decrease after receiving dataset_maximal_crop_box_width,
 		# so setting the global dataset box width to this new minimal value in box_width or
 		# dataset_maximal_crop_box_width is unchanged, if box_width did not change
-		updated_dataset_maximal_crop_box_width = box_width
-		if dataset_maximal_crop_box_width != box_width:
-			logging.info(
-				"\tUpdated the global dataset max crop box width to: %s" % box_width)
+		logging.info(
+                    "\tUpdated the global dataset min crop box dims from %s to: %s" % (dataset_minimal_crop_box_dims, updated_dataset_maximal_crop_box_dims))
 
 	imp.setRoi(bounding_roi_rot, True)
 	crop_template = imp.getRoi()
 	roim.addRoi(crop_template)
 	roim.select(0)
 	roim.runCommand("Save", os.path.join(meta_dir, "crop_template.roi"))
+	roim.close()
 	# This crops by a unrotated bounding box created around the rotated selection box
 	final_imp = imp.crop() # so later, when we rotate and crop again there will be no blacked corners in the image.
 	IJ.run(final_imp, "Select All", "")
 	IJ.run(final_imp, "Rotate... ", "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
 	final_center_x = final_imp.getWidth() / 2
 	final_center_y = final_imp.getHeight() / 2
-	IJ.run(final_imp, "Specify...", "width=%s height=600 x=%s y=%s centered" %
-			(box_width, final_center_x, final_center_y))
+	IJ.run(final_imp, "Specify...", "width=%s height=%s x=%s y=%s centered" %
+			(box_width, box_height, final_center_x, final_center_y))
 	cropped_max_time_proj = final_imp.crop()
 	if dataset["head_direction"] == "left":
 		IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Right", "")
@@ -917,9 +915,9 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_maximal
 		IJ.run(cropped_max_time_proj, "Flip Horizontally", "")
 	else:
 		IJ.run(cropped_max_time_proj, "Rotate 90 Degrees Left", "")
-	roim.close()
-	table.reset()
-	return (crop_template, cropped_max_time_proj, updated_dataset_maximal_crop_box_width)
+	
+
+	return (crop_template, cropped_max_time_proj, updated_dataset_maximal_crop_box_dims)
 
 
 def get_polygon_roi_angle(roi):
@@ -946,16 +944,22 @@ def get_polygon_roi_angle(roi):
 	return angle
 
 
-def get_rotated_rect_roi_width(roi):
+def get_rotated_rect_polygon_roi_dims(roi):
 	x1 = roi.getPolygon().xpoints[0]
 	x2 = roi.getPolygon().xpoints[1]
+	x3 = roi.getPolygon().xpoints[2]
 	y1 = roi.getPolygon().ypoints[0]
 	y2 = roi.getPolygon().ypoints[1]
-	width = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-	# logging.info("Determined rectangular roi width before rounding: %s" % width)
-	width = round(width / 10) * 10
-	# logging.info("\tRectangular roi width: %s" % width)
-	return width
+	y3 = roi.getPolygon().ypoints[2]
+	dim1 = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+	dim2 = math.sqrt((x3 - x2) ** 2 + (y3 - y2) ** 2)
+	width = int(math.ceil(max(dim1, dim2)))
+	height = int(math.ceil(min(dim1, dim2)))
+	width -= width % 4 
+	height -= height % 4 
+	# logging.info("Determined rectangular roi dims before rounding: %s, %s" % (max(dim1, dim2), min(dim1, dim2)))
+	# logging.info("\tRectangular roi dims after rounding: %s, %s" % (width, height))
+	return width, height
 
 
 def crop_stack_by_template(stack, crop_template, dataset):
@@ -981,8 +985,8 @@ def crop_stack_by_template(stack, crop_template, dataset):
 			"angle=%s grid=1 interpolation=Bilinear stack" % round(get_polygon_roi_angle(crop_template), ndigits=1))
 	final_center_x = cropped_stack.getWidth() / 2
 	final_center_y = cropped_stack.getHeight() / 2
-	box_width = get_rotated_rect_roi_width(crop_template)
-	IJ.run(cropped_stack, "Specify...", "width=%s height=600 x=%s y=%s centered" % (box_width, final_center_x, final_center_y))
+	box_width, box_height = get_rotated_rect_polygon_roi_dims(crop_template)
+	IJ.run(cropped_stack, "Specify...", "width=%s height=%s x=%s y=%s centered" % (box_width, box_height, final_center_x, final_center_y))
 	cropped_stack_resized = cropped_stack.crop("stack")
 
 	if dataset["head_direction"] == "left":
