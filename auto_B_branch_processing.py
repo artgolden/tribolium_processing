@@ -469,7 +469,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					montage_stack_name = get_tiff_name_from_dir(contr_dir)
 				if i > 0:
 					montage_stack = StackCombiner.combineHorizontally(StackCombiner(), montage_stack, imp_stack.getStack())
-			montage_stack_name.direction = "(MT)"
+			montage_stack_name.direction = "(AX)"
 			montage_stack = ImagePlus("montage", montage_stack)
 			montage_dir = os.path.join(root_dataset_dir, MONTAGE_DIR_NAME)
 			if not os.path.exists(montage_dir):
@@ -1113,10 +1113,10 @@ def subset_planes(stack_img, planes):
 def auto_contrast(image):
 	ip = image.getProcessor()
 	hist = ip.getHistogram()
-	triag_threshold = Auto_Threshold.Triangle(hist)
+	percentile_threshold = Auto_Threshold.Percentile(hist)
 	num_overexposed_pixels = 0
-	upper_threshold = 10000
-	sum_elem_above_threshold = sum(hist[i] for i in range(triag_threshold, len(hist)))
+	upper_threshold = 65535
+	sum_elem_above_threshold = sum(hist[i] for i in range(percentile_threshold, len(hist)))
 
 	# making it so 1% of all pixels will be overexposed
 	num_overexposed_pixels_threshold = PERCENT_OVEREXPOSED_PIXELS / 100 * sum_elem_above_threshold
@@ -1125,12 +1125,14 @@ def auto_contrast(image):
 		if num_overexposed_pixels > num_overexposed_pixels_threshold:
 			upper_threshold = i
 			break
-	# logging.info("Chosen theese values to adjust image histogram, min: %s max: %s" % (triag_threshold, upper_threshold))
-	image.setDisplayRange(triag_threshold, upper_threshold)
+	# logging.info("Chosen theese values to adjust image histogram, min: %s max: %s" % (percentile_threshold, upper_threshold))
+	image.setDisplayRange(percentile_threshold, upper_threshold)
 	IJ.run(image, "Apply LUT", "")
 
 
 def adjust_histogram_stack(imp_stack):
+	if imp_stack.getBitDepth() != 16:
+		raise Exception("Only 16-bit images can be auto histogram adjusted.")
 	adjusted_stack = []
 	stack = imp_stack.getStack()
 	for i in range(1, imp_stack.getNSlices() + 1):
