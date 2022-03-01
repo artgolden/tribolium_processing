@@ -83,23 +83,23 @@ Example JSON metadata file contents:
 			"head_direction": "left",
 			"use_manual_bounding_box": true,
 			"planes_to_keep_per_direction": [
-            {
-                "start": 1,
-                "end": 150
-            },
-            {
-                "start": 10,
-                "end": 160
-            },
-            {
-                "start": 1,
-                "end": 150
-            },
-            {
-                "start": 1,
-                "end": 150
-            }
-        ]
+			{
+				"start": 1,
+				"end": 150
+			},
+			{
+				"start": 10,
+				"end": 160
+			},
+			{
+				"start": 1,
+				"end": 150
+			},
+			{
+				"start": 1,
+				"end": 150
+			}
+		]
 		}
 	]
 }"""
@@ -248,7 +248,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		specimen_directions_in_channels = tuple(specimen_directions_in_channels)
 		
 		logging.info("\n%s\nStarted processing dataset: DS%04d \n%s\n" %
-		             ("#" * 100, dataset_id, "#" * 100))
+					 ("#" * 100, dataset_id, "#" * 100))
 		print("Started processing dataset: DS%04d" % dataset_id)
 		raw_images_dir = get_raw_images_dir(datasets_dir, dataset_id)
 		root_dataset_dir = os.path.split(raw_images_dir)[0]
@@ -256,19 +256,19 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			logging.info(
 				"Found %s file. Dataset DS%04d already processed, skipping." % (DATASET_FINISHED_FILE_NAME, dataset_id))
 			print("Found %s file. Dataset DS%04d already processed, skipping." %
-			      (DATASET_FINISHED_FILE_NAME, dataset_id))
+				  (DATASET_FINISHED_FILE_NAME, dataset_id))
 			continue
 		if os.path.exists(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME)):
 			logging.info(
 				"Found %s file. Dataset DS%04d errored while previous processing, skipping." % (DATASET_ERROR_FILE_NAME, dataset_id))
 			print("Found %s file. Dataset DS%04d errored while previous processing, skipping." %
-			      (DATASET_ERROR_FILE_NAME, dataset_id))
+				  (DATASET_ERROR_FILE_NAME, dataset_id))
 			continue
 		if os.path.exists(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME)):
 			logging.info(
 				"Found %s file. Perhaps the dataset DS%04d is currently being processed by other Fiji instance, skipping." % (DATASET_ACTIVE_FILE_NAME, dataset_id))
 			print("Found %s file. Perhaps the dataset DS%04d is currently being processed by other Fiji instance, skipping." %
-			      (DATASET_ACTIVE_FILE_NAME, dataset_id))
+				  (DATASET_ACTIVE_FILE_NAME, dataset_id))
 			continue
 		open(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME), 'a').close()
 
@@ -444,9 +444,9 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 						tstack_dir, cropped_tstack_file_name.get_name()))
 				else:
 					logging.info("\tChannel: %s Direction: %s Found existing cropped max projected stacks. Using them." % (
-                                                channel, direction))
+												channel, direction))
 					cropped_tstack = IJ.openImage(os.path.join(
-                                            tstack_dir, cropped_tstack_file_name.get_name()))
+											tstack_dir, cropped_tstack_file_name.get_name()))
 					
 
 				logging.info("\tChannel: %s Direction: %s Creating histogram adjusted stacks of max projections." % (
@@ -499,7 +499,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 							raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
 				else:
 					logging.info("\tChannel: %s Direction: %s Found existing cropped raw stacks, using them." % (
-                                            channel, direction))
+											channel, direction))
 			montage_stack = ImagePlus()
 			montage_stack_name = None
 			for i, contr_dir in enumerate(contrast_dirs):
@@ -892,7 +892,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_minimal
 		logging.info("\tUsing dataset's global value of the crop box dims: %s, %s to create the crop template" % (dataset_width, dataset_height))
 		box_width, box_height = dataset_width, dataset_height
 		IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s centered" %
-                    (dataset_width, dataset_height, embryo_center_x, embryo_center_y))
+					(dataset_width, dataset_height, embryo_center_x, embryo_center_y))
 	else:
 		dataset_width, dataset_height = dataset_minimal_crop_box_dims
 		box_width = embryo_length + 12 + 4 - embryo_length % 4
@@ -900,7 +900,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_minimal
 		box_width = max(box_width, dataset_width)
 		box_height = max(box_height, dataset_height)
 		IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s centered" %
-                    (box_width, box_height, embryo_center_x, embryo_center_y))
+					(box_width, box_height, embryo_center_x, embryo_center_y))
 		updated_dataset_maximal_crop_box_dims = (box_width, box_height)
 	bounding_roi = imp.getRoi()
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
@@ -915,7 +915,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_minimal
 				"Could not find a bounding box that contains whole embryo and does not protrude out of the image.")
 	if updated_dataset_maximal_crop_box_dims != dataset_minimal_crop_box_dims:
 		logging.info(
-                    "\tUpdated the global dataset min crop box dims from %s to: %s" % (dataset_minimal_crop_box_dims, updated_dataset_maximal_crop_box_dims))
+					"\tUpdated the global dataset min crop box dims from %s to: %s" % (dataset_minimal_crop_box_dims, updated_dataset_maximal_crop_box_dims))
 
 	imp.setRoi(bounding_roi_rot, True)
 	crop_template = imp.getRoi()
