@@ -1,12 +1,3 @@
-# File(label='Choose a test image', style='file') image
-#  File(label='crop template', style='file') crop_template
-#@ DatasetService ds
-#@ DatasetIOService io
-#@ OpService ops
-#@ UIService ui
-#@ ImageJ ij
-#@ ConvertService convert
-
 
 from distutils.dir_util import mkpath
 import imp
@@ -37,7 +28,6 @@ from ij.plugin import RoiReader
 from ij.gui import PointRoi, RotatedRectRoi
 
 
-
 def get_rotated_rect_roi_width():
 	img = WindowManager.getCurrentImage()
 	roi = img.getRoi()
@@ -47,7 +37,7 @@ def get_rotated_rect_roi_width():
 	y1 = roi.getPolygon().ypoints[0]
 	y2 = roi.getPolygon().ypoints[1]
 	width = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-	width = (width / 10 ) * 10 
+	width = (width / 10) * 10
 	# print(x1, y1, x2, y2)
 	# print width
 
@@ -100,12 +90,12 @@ def midpoint(x1, y1, x2, y2):
 	x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
 	return ((x1 + x2) / 2, (y1 + y2) / 2)
 
+
 def polygon_to_rotated_rect_roi(roi):
 	if isinstance(roi, RotatedRectRoi):
 		return roi
-	if roi.getNCoordinates() != 4:
-		raise Exception(
-			"polygon_to_rotated_rect_roi Can only convert rectangles. Received polygon with %s points." % roi.getNCoordinates())
+	print roi.getFloatPolygon().xpoints
+	print roi.getFloatPolygon().ypoints
 	x1 = roi.getFloatPolygon().xpoints[0]
 	x2 = roi.getFloatPolygon().xpoints[1]
 	x3 = roi.getFloatPolygon().xpoints[2]
@@ -114,6 +104,13 @@ def polygon_to_rotated_rect_roi(roi):
 	y2 = roi.getFloatPolygon().ypoints[1]
 	y3 = roi.getFloatPolygon().ypoints[2]
 	y4 = roi.getFloatPolygon().ypoints[3]
+	if roi.getNCoordinates() > 4:
+		x5 = roi.getFloatPolygon().xpoints[4]
+		y5 = roi.getFloatPolygon().ypoints[4]
+		if abs(x5 - x1) + abs(y5 - y1) > 1e-05:
+			# For some reason after several rotations rectangle polygon can have 5 points
+			raise Exception(
+				"polygon_to_rotated_rect_roi Can only convert rectangles. Received polygon with %s points. And first and last points are not the same." % roi.getNCoordinates())
 	# print("Original polygon: ", x1, y1, x2, y2, x3, y3, x4, y4)
 	dist1 = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 	dist2 = math.sqrt((x3 - x2) ** 2 + (y3 - y2) ** 2)
@@ -131,13 +128,18 @@ def polygon_to_rotated_rect_roi(roi):
 		# print(x2, y2, x3, y3, width)
 	return rot_rect_roi
 
+
 def check_manual_crop_box():
 	img = WindowManager.getCurrentImage()
-	roi = img.getRoi()
-	roi = polygon_to_rotated_rect_roi(roi)
+	roi_input = img.getRoi()
+
+	# Specify angle of rotation here
+	roi_input = RoiRotator.rotate(roi_input, 0)
+
+	roi = polygon_to_rotated_rect_roi(roi_input)
 	img.setRoi(roi)
-	print("Dims: ", get_rotated_rect_roi_dims(roi))
-	print("Angle: ", get_polygon_roi_angle(roi))
+	#print("Dims: ", get_rotated_rect_roi_dims(roi))
+	#print("Angle: ", get_polygon_roi_angle(roi))
 	# exit()
 	cropped = img.crop()
 	IJ.run(cropped, "Select All", "")
@@ -155,7 +157,4 @@ def check_manual_crop_box():
 
 
 # get_rotated_rect_roi_width()
-check_manual_crop_box()	
-	
-
-
+check_manual_crop_box()
