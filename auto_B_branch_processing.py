@@ -6,7 +6,7 @@
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.2.28 :)
+# Last manual update of this line 2022.3.1 :)
 
 from distutils.dir_util import mkpath
 import math
@@ -81,7 +81,25 @@ Example JSON metadata file contents:
 				]
 			},
 			"head_direction": "left",
-			"use_manual_bounding_box": false
+			"use_manual_bounding_box": true,
+			"planes_to_keep_per_direction": [
+            {
+                "start": 1,
+                "end": 150
+            },
+            {
+                "start": 10,
+                "end": 160
+            },
+            {
+                "start": 1,
+                "end": 150
+            },
+            {
+                "start": 1,
+                "end": 150
+            }
+        ]
 		}
 	]
 }"""
@@ -454,8 +472,13 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 						if i == 0:
 							logging.info("\tChannel: %s Direction: %s Finding which planes to keep in raw image stacks." % (
 								channel, direction))
+							if "planes_to_keep_per_direction" in dataset:
+								manual_planes_to_keep = (dataset["planes_to_keep_per_direction"][direction - 1]
+														["start"], dataset["planes_to_keep_per_direction"][direction - 1]["end"])
+							else:
+								manual_planes_to_keep = None
 							try:
-								planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir)
+								planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir, manual_planes_to_keep)
 							except Exception as e:
 								logging.info("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
 									channel, direction, e))
@@ -1045,7 +1068,7 @@ def crop_stack_by_template(stack, crop_template, dataset):
 	return cropped_stack_resized
 
 
-def find_planes_to_keep(zstack, meta_dir):
+def find_planes_to_keep(zstack, meta_dir, manual_planes_to_keep):
 	"""Calculates planes to keep, so that the embryo is centered in them. 
 	Saves a cropped Y_projected stack for user assessment in the metadata directory. 
 
@@ -1058,56 +1081,63 @@ def find_planes_to_keep(zstack, meta_dir):
 	"""
 	IJ.run(zstack, "Properties...",
 			"pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
-
-	# This variant of implementation does not recalculate the pixel values and does not expand the image.
-	# So later, when we convert to mask, the image will be number_of_planes in height, and not 4*number_of_planes
-	# as would be with the Reslice made from GUI.
-	# This does not account for voxel_depth, so the resliced image is not rectangular.
 	for_user_asessment = zstack.duplicate()
-	resliced = Slicer.reslice(Slicer(), zstack)
 
-	max_proj_reslice = project_a_stack(resliced)
-	debug_copy_max_proj_reslice = max_proj_reslice.duplicate()
-	ip = max_proj_reslice.getProcessor()
-	radius = 4
-	RankFilters().rank(ip, radius, RankFilters.MEDIAN)
+	if manual_planes_to_keep is None:
+		# This variant of implementation does not recalculate the pixel values and does not expand the image.
+		# So later, when we convert to mask, the image will be number_of_planes in height, and not 4*number_of_planes
+		# as would be with the Reslice made from GUI.
+		# This does not account for voxel_depth, so the resliced image is not rectangular.
+		resliced = Slicer.reslice(Slicer(), zstack)
 
-	hist = ip.getHistogram()
-	triag_threshold = Auto_Threshold.Mean(hist)
-	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
-	IJ.run(max_proj_reslice, "Convert to Mask", "")
+		max_proj_reslice = project_a_stack(resliced)
+		ip = max_proj_reslice.getProcessor()
+		radius = 4
+		RankFilters().rank(ip, radius, RankFilters.MEDIAN)
 
-	table = ResultsTable()
-	# Initialise RoiManager without display (boolean value is ignored)
-	roim = RoiManager(False)
-	MIN_PARTICLE_SIZE = 2000  # pixel ^ 2
-	MAX_PARTICLE_SIZE = float("inf")
-	ParticleAnalyzer.setRoiManager(roim)
-	pa = ParticleAnalyzer(
-			ParticleAnalyzer.ADD_TO_MANAGER,
-			Measurements.RECT,
-			table,
-			MIN_PARTICLE_SIZE,
-			MAX_PARTICLE_SIZE)
-	pa.analyze(max_proj_reslice)
-	box_start = table.getValue("BY", 0)
-	box_width = table.getValue("Height", 0)
-	middle_y = box_start + box_width / 2
-	start_plane = int(round(middle_y - 75))
-	end_plane = int(round(middle_y + 74))
+		hist = ip.getHistogram()
+		triag_threshold = Auto_Threshold.Mean(hist)
+		ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
+		IJ.run(max_proj_reslice, "Convert to Mask", "")
 
-	if start_plane < 1:
-		if start_plane < -5:
+		table = ResultsTable()
+		# Initialise RoiManager without display (boolean value is ignored)
+		roim = RoiManager(False)
+		MIN_PARTICLE_SIZE = 2000  # pixel ^ 2
+		MAX_PARTICLE_SIZE = float("inf")
+		ParticleAnalyzer.setRoiManager(roim)
+		pa = ParticleAnalyzer(
+				ParticleAnalyzer.ADD_TO_MANAGER,
+				Measurements.RECT,
+				table,
+				MIN_PARTICLE_SIZE,
+				MAX_PARTICLE_SIZE)
+		pa.analyze(max_proj_reslice)
+		box_start = table.getValue("BY", 0)
+		box_width = table.getValue("Height", 0)
+		middle_y = box_start + box_width / 2
+		start_plane = int(round(middle_y - 75))
+		end_plane = int(round(middle_y + 74))
+
+		if start_plane < 1:
+			if start_plane < -5:
+				raise Exception(
+					"Embryo is more than 5 planes off center in Z-direction, for the 150 planes cropping.")
+			start_plane = 1
+			end_plane = 150
+		if end_plane > zstack.getNSlices():
+			if end_plane > zstack.getNSlices() + 5:
+				raise Exception(
+					"Embryo is more than 5 planes off center in Z-direction, for the 150 planes cropping.")
+			end_plane = zstack.getNSlices()
+			start_plane = zstack.getNSlices() - 149
+	else:
+		start_plane, end_plane = manual_planes_to_keep
+		logging.info("\t Using manually specified planes to keep.")
+		if start_plane <= 0 or end_plane > zstack.getNSlices():
 			raise Exception(
-				"Embryo is more than 5 planes off center in Z-direction, for the 150 planes cropping.")
-		start_plane = 1
-		end_plane = 150
-	if end_plane > zstack.getNSlices():
-		if end_plane > zstack.getNSlices() + 5:
-			raise Exception(
-				"Embryo is more than 5 planes off center in Z-direction, for the 150 planes cropping.")
-		end_plane = zstack.getNSlices()
-		start_plane = zstack.getNSlices() - 149
+				"Manually specified planes to keep cannot be applied to a stack with %s planes." % zstack.getNSlices())
+	
 	logging.info("\t selected planes to keep: %s-%s" % (start_plane, end_plane))
 	logging.info("\t Cropping Y-projection for user assessment with %s planes" %
 				 for_user_asessment.getNSlices())
