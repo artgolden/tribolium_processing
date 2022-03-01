@@ -33,6 +33,8 @@ from ij.plugin import ZProjector
 from ij.plugin import Slicer
 from ij.plugin import StackCombiner
 from ij.process import ByteProcessor
+from ij.io import RoiDecoder
+from ij.gui import PointRoi, RotatedRectRoi
 
 #TODO:
 #	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75))
@@ -94,6 +96,8 @@ MONTAGE_DIR_NAME = "(B5)-TStacks-ZN-Montage"
 DATASET_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
 DATASET_FINISHED_FILE_NAME = "B_BRANCH_FINISHED"
 DATASET_ACTIVE_FILE_NAME = "B_BRANCH_ACTIVE"
+
+MANUAL_CROP_BOX_FILE_NAME = "manual_crop_box"
 
 
 DEFAULT_CROP_BOX_WIDTH = 1100
@@ -734,129 +738,131 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_minimal
 	imp = max_time_projection
 
 	if dataset["use_manual_bounding_box"] == True:
-		pass
+		logging.info("\tUsing manualy specified corop box.")
+		manual_roi = RoiDecoder(os.path.join(meta_dir, "%s.roi" % MANUAL_CROP_BOX_FILE_NAME)).getRoi()
+		rot_angle = round(get_polygon_roi_angle(manual_roi), ndigits=1)
+		# Always assuming that embryo is horizontal
+		embryo_length, embryo_width = get_rotated_rect_polygon_roi_dims(manual_roi)
+		embryo_center_x = manual_roi.getContourCentroid()[0]
+		embryo_center_y = manual_roi.getContourCentroid()[1]
+	else:
+		ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
+		mask = ImagePlus("mask", ip)
+		radius = 4
+		RankFilters().rank(ip, radius, RankFilters.MEDIAN)
+		hist = ip.getHistogram()
+		triag_threshold = Auto_Threshold.Triangle(hist)
+		ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
+		IJ.run(mask, "Convert to Mask", "")
+		# Repeated Erosion and Dilation to remove dirt, which shows as protrusions on the embryo mask
+		# Using IJ.run() for erosion and dilation has some persistent state after run
+		# that produces inconsistent behaviour and bugs
+		# This is why I am using ByteProcessor methods directly
+		bt = mask.getProcessor().convertToByteProcessor()
+		for i in range(40):
+			bt.erode(2, 0)
+		for i in range(40):
+			bt.dilate(2, 0)
+		for i in range(40):
+			bt.erode(3, 0)
+		for i in range(40):
+			bt.dilate(3, 0)
+		mask.setProcessor(bt)
+		IJ.run("Clear Results")
+		table = ResultsTable()
+		# Initialise without display (boolean value is ignored)
+		roim = RoiManager(False)
+		MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
+		MAX_PARTICLE_SIZE = float("inf")
+		ParticleAnalyzer.setRoiManager(roim)
+		pa = ParticleAnalyzer(
+				ParticleAnalyzer.ADD_TO_MANAGER,
+				Measurements.ELLIPSE,
+				table,
+				MIN_PARTICLE_SIZE,
+				MAX_PARTICLE_SIZE)
+		pa.analyze(mask)
+		rot_angle = round(table.getValue("Angle", 0), ndigits=1)
+		if rot_angle > 90:
+			rot_angle -= 180
+		logging.info("\t Angle of the elipse fitted onto the embryo: %s", rot_angle)
+		roi_arr = roim.getRoisAsArray()
+		roim.runCommand('reset')
+		imp.setRoi(roi_arr[len(roi_arr) - 1])
+		IJ.run(imp, "Select Bounding Box (guess background color)", "")
+		bounding_roi = imp.getRoi()
+		# Crop the image so the borders are equidistant from the borders of the bounding box
+		# for the center of rotation to be aligned roughly with the center of the embryo
+		bounding_rectangle = bounding_roi.getBounds()
+		# extracting width field from java.awt.Rectangle
+		i = bounding_rectangle.x
+		j = bounding_rectangle.y
+		We = bounding_rectangle.width
+		He = bounding_rectangle.height
+		W = imp.getWidth()
+		H = imp.getHeight()
+		ax = i
+		bx = W - i - We
+		ay = j
+		by = H - j - He
+		xn = i - min(ax, bx)
+		yn = j - min(ay, by)
+		Wn = We + 2 * min(ax, bx)
+		Hn = He + 2 * min(ay, by)
+		IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s" % (Wn, Hn, xn, yn))
+		equidistant_crop_roi = imp.getRoi()
+		mask.setRoi(equidistant_crop_roi)
+		mask_cropped = mask.crop()
+		# For some reason cropping a mask does not produce a proper binarized image (it is gray if you view it), 
+		# So I had to redo the thresholding
+		IJ.run(mask_cropped, "Rotate... ", "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
+		hist = mask_cropped.getProcessor().getHistogram()
+		triag_threshold = Auto_Threshold.Triangle(hist)
+		mask_cropped.getProcessor().setThreshold(
+			triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
+		IJ.run(mask_cropped, "Convert to Mask", "")
 
-
-
-	ip = imp.getProcessor().duplicate()  # get pixel array?, as a copy
-	mask = ImagePlus("mask", ip)
-	radius = 4
-	RankFilters().rank(ip, radius, RankFilters.MEDIAN)
-	hist = ip.getHistogram()
-	triag_threshold = Auto_Threshold.Triangle(hist)
-	ip.setThreshold(triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
-	IJ.run(mask, "Convert to Mask", "")
-	# Repeated Erosion and Dilation to remove dirt, which shows as protrusions on the embryo mask
-	# Using IJ.run() for erosion and dilation has some persistent state after run
-	# that produces inconsistent behaviour and bugs
-	# This is why I am using ByteProcessor methods directly
-	bt = mask.getProcessor().convertToByteProcessor()
-	for i in range(40):
-		bt.erode(2, 0)
-	for i in range(40):
-		bt.dilate(2, 0)
-	for i in range(40):
-		bt.erode(3, 0)
-	for i in range(40):
-		bt.dilate(3, 0)
-	mask.setProcessor(bt)
-	IJ.run("Clear Results")
-	table = ResultsTable()
-	# Initialise without display (boolean value is ignored)
-	roim = RoiManager(False)
-	MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
-	MAX_PARTICLE_SIZE = float("inf")
-	ParticleAnalyzer.setRoiManager(roim)
-	pa = ParticleAnalyzer(
-			ParticleAnalyzer.ADD_TO_MANAGER,
-			Measurements.ELLIPSE,
-			table,
-			MIN_PARTICLE_SIZE,
-			MAX_PARTICLE_SIZE)
-	pa.analyze(mask)
-	rot_angle = round(table.getValue("Angle", 0), ndigits=1)
-	# TODO: Find a better way to find angle of rotation of the box
-	if rot_angle > 135:
-		rot_angle = rot_angle - 180
-	if rot_angle < -135:
-		rot_angle = 180 - rot_angle
-	roi_arr = roim.getRoisAsArray()
-	roim.runCommand('reset')
-	imp.setRoi(roi_arr[len(roi_arr) - 1])
-	IJ.run(imp, "Select Bounding Box (guess background color)", "")
-	bounding_roi = imp.getRoi()
-	# Crop the image so the borders are equidistant from the borders of the bounding box
-	# for the center of rotation to be aligned roughly with the center of the embryo
-	bounding_rectangle = bounding_roi.getBounds()
-	# extracting width field from java.awt.Rectangle
-	i = bounding_rectangle.x
-	j = bounding_rectangle.y
-	We = bounding_rectangle.width
-	He = bounding_rectangle.height
-	W = imp.getWidth()
-	H = imp.getHeight()
-	ax = i
-	bx = W - i - We
-	ay = j
-	by = H - j - He
-	xn = i - min(ax, bx)
-	yn = j - min(ay, by)
-	Wn = We + 2 * min(ax, bx)
-	Hn = He + 2 * min(ay, by)
-	IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s" % (Wn, Hn, xn, yn))
-	equidistant_crop_roi = imp.getRoi()
-	mask.setRoi(equidistant_crop_roi)
-	mask_cropped = mask.crop()
-	# For some reason cropping a mask does not produce a proper binarized image (it is gray if you view it), 
-	# So I had to redo the thresholding
-	IJ.run(mask_cropped, "Rotate... ", "angle=%s grid=1 interpolation=Bilinear" % rot_angle)
-	hist = mask_cropped.getProcessor().getHistogram()
-	triag_threshold = Auto_Threshold.Triangle(hist)
-	mask_cropped.getProcessor().setThreshold(
-		triag_threshold, float("inf"), ImageProcessor.NO_LUT_UPDATE)
-	IJ.run(mask_cropped, "Convert to Mask", "")
-
-	# Extract the precise embryo center in the rotated cropped image
-	roim = RoiManager(False)
-	MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
-	MAX_PARTICLE_SIZE = float("inf")
-	ParticleAnalyzer.setRoiManager(roim)
-	# For some reason ParticleAnalyzer cannot be run without reinitialization,
-	# that's why repeating it here
-	pa = ParticleAnalyzer(
-			ParticleAnalyzer.ADD_TO_MANAGER,
-			Measurements.ELLIPSE,
-			table,
-			MIN_PARTICLE_SIZE,
-			MAX_PARTICLE_SIZE)
-	pa.analyze(mask_cropped)
-	table.reset()
-	roi_arr = roim.getRoisAsArray()
-	mask_cropped.setRoi(roi_arr[len(roi_arr) - 1])
-	roim.runCommand('reset')
-	IJ.run(mask_cropped, "Select Bounding Box (guess background color)", "")
-	cropped_bounding_roi = mask_cropped.getRoi()
-	embryo_length = cropped_bounding_roi.getBounds().width
-	embryo_width = cropped_bounding_roi.getBounds().height
-	logging.info("\tEmbryo dims: (%s, %s)" % (embryo_length, embryo_width))
-	embryo_cropped_rot_center_x = cropped_bounding_roi.getContourCentroid()[0]
-	embryo_cropped_rot_center_y = cropped_bounding_roi.getContourCentroid()[1]
-	# Transform the embryo center coordinates with the inverse rotation
-	rad_angle = math.radians(-rot_angle)
-	# switch to coordinates with origin in the cropped image center.
-	xC = embryo_cropped_rot_center_x - Wn / 2
-	yC = embryo_cropped_rot_center_y - Hn / 2
-	embryo_cropped_center_x = xC * \
-		math.cos(rad_angle) - yC * math.sin(rad_angle)
-	embryo_cropped_center_y = xC * \
-		math.sin(rad_angle) + yC * math.cos(rad_angle)
-	embryo_cropped_center_x += Wn / 2
-	embryo_cropped_center_y += Hn / 2
-	# Transform the embryo center coordinates to reverse cropping
-	embryo_center_x = embryo_cropped_center_x + xn
-	embryo_center_y = embryo_cropped_center_y + yn
+		# Extract the precise embryo center in the rotated cropped image
+		roim = RoiManager(False)
+		MIN_PARTICLE_SIZE = 10000  # pixel ^ 2
+		MAX_PARTICLE_SIZE = float("inf")
+		ParticleAnalyzer.setRoiManager(roim)
+		# For some reason ParticleAnalyzer cannot be run without reinitialization,
+		# that's why repeating it here
+		pa = ParticleAnalyzer(
+				ParticleAnalyzer.ADD_TO_MANAGER,
+				Measurements.ELLIPSE,
+				table,
+				MIN_PARTICLE_SIZE,
+				MAX_PARTICLE_SIZE)
+		pa.analyze(mask_cropped)
+		table.reset()
+		roi_arr = roim.getRoisAsArray()
+		mask_cropped.setRoi(roi_arr[len(roi_arr) - 1])
+		roim.runCommand('reset')
+		IJ.run(mask_cropped, "Select Bounding Box (guess background color)", "")
+		cropped_bounding_roi = mask_cropped.getRoi()
+		embryo_length = cropped_bounding_roi.getBounds().width
+		embryo_width = cropped_bounding_roi.getBounds().height
+		logging.info("\tEmbryo dims: (%s, %s)" % (embryo_length, embryo_width))
+		embryo_cropped_rot_center_x = cropped_bounding_roi.getContourCentroid()[0]
+		embryo_cropped_rot_center_y = cropped_bounding_roi.getContourCentroid()[1]
+		# Transform the embryo center coordinates with the inverse rotation
+		rad_angle = math.radians(-rot_angle)
+		# switch to coordinates with origin in the cropped image center.
+		xC = embryo_cropped_rot_center_x - Wn / 2
+		yC = embryo_cropped_rot_center_y - Hn / 2
+		embryo_cropped_center_x = xC * \
+			math.cos(rad_angle) - yC * math.sin(rad_angle)
+		embryo_cropped_center_y = xC * \
+			math.sin(rad_angle) + yC * math.cos(rad_angle)
+		embryo_cropped_center_x += Wn / 2
+		embryo_cropped_center_y += Hn / 2
+		# Transform the embryo center coordinates to reverse cropping
+		embryo_center_x = embryo_cropped_center_x + xn
+		embryo_center_y = embryo_cropped_center_y + yn
+	
 	logging.info("\tEmbryo center: (%s, %s)" % (embryo_center_x, embryo_center_y))
-
 
 	if use_dataset_box_dims == True:
 		dataset_width, dataset_height = dataset_minimal_crop_box_dims
@@ -873,7 +879,6 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_minimal
 		IJ.run(imp, "Specify...", "width=%s height=%s x=%s y=%s centered" %
                     (box_width, box_height, embryo_center_x, embryo_center_y))
 		updated_dataset_maximal_crop_box_dims = (box_width, box_height)
-	roim.runCommand('reset')
 	bounding_roi = imp.getRoi()
 	bounding_roi_rot = RoiRotator.rotate(bounding_roi, -rot_angle)
 
@@ -886,18 +891,17 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_minimal
 			raise Exception(
 				"Could not find a bounding box that contains whole embryo and does not protrude out of the image.")
 	if updated_dataset_maximal_crop_box_dims != dataset_minimal_crop_box_dims:
-		# box_width could only decrease after receiving dataset_maximal_crop_box_width,
-		# so setting the global dataset box width to this new minimal value in box_width or
-		# dataset_maximal_crop_box_width is unchanged, if box_width did not change
 		logging.info(
                     "\tUpdated the global dataset min crop box dims from %s to: %s" % (dataset_minimal_crop_box_dims, updated_dataset_maximal_crop_box_dims))
 
 	imp.setRoi(bounding_roi_rot, True)
 	crop_template = imp.getRoi()
-	roim.addRoi(crop_template)
-	roim.select(0)
-	roim.runCommand("Save", os.path.join(meta_dir, "crop_template.roi"))
-	roim.close()
+	if dataset["use_manual_bounding_box"] == False:
+		roim.runCommand('reset')
+		roim.addRoi(crop_template)
+		roim.select(0)
+		roim.runCommand("Save", os.path.join(meta_dir, "crop_template.roi"))
+		roim.close()
 	# This crops by a unrotated bounding box created around the rotated selection box
 	final_imp = imp.crop() # so later, when we rotate and crop again there will be no blacked corners in the image.
 	IJ.run(final_imp, "Select All", "")
@@ -920,43 +924,86 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_minimal
 	return (crop_template, cropped_max_time_proj, updated_dataset_maximal_crop_box_dims)
 
 
+def polygon_to_rotated_rect_roi(roi):
+	if isinstance(roi, RotatedRectRoi):
+		return roi
+	if roi.getNCoordinates() != 4:
+		raise Exception(
+			"polygon_to_rotated_rect_roi Can only convert rectangles. Received polygon with %s points." % roi.getNCoordinates())
+	x1 = roi.getFloatPolygon().xpoints[0]
+	x2 = roi.getFloatPolygon().xpoints[1]
+	x3 = roi.getFloatPolygon().xpoints[2]
+	x4 = roi.getFloatPolygon().xpoints[3]
+	y1 = roi.getFloatPolygon().ypoints[0]
+	y2 = roi.getFloatPolygon().ypoints[1]
+	y3 = roi.getFloatPolygon().ypoints[2]
+	y4 = roi.getFloatPolygon().ypoints[3]
+	dist1 = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+	dist2 = math.sqrt((x3 - x2) ** 2 + (y3 - y2) ** 2)
+	if dist1 > dist2:
+		width = dist2
+		rx1, ry1 = midpoint(x1, y1, x4, y4)
+		rx2, ry2 = midpoint(x2, y2, x3, y3)
+		rot_rect_roi = RotatedRectRoi(rx1, ry1, rx2, ry2, width)
+	else:
+		width = dist1
+		rx1, ry1 = midpoint(x1, y1, x2, y2)
+		rx2, ry2 = midpoint(x3, y3, x4, y4)
+		rot_rect_roi = RotatedRectRoi(rx1, ry1, rx2, ry2, width)
+	return rot_rect_roi
+
 def get_polygon_roi_angle(roi):
-	"""Returns an angle between first line in the PolygonRoi and horizontal line
+	"""Returns an angle between longer line in the rectangular PolygonRoi and horizontal line
 
 	Args:
 		roi (PolygonRoi): intended for rectangular Rois
 
 	Returns:
-		double: angle between first line in the PolygonRoi and horizontal line
+		double: angle between longer line in the PolygonRoi and horizontal line
 	"""
-	x1 = roi.getPolygon().xpoints[0]
-	x2 = roi.getPolygon().xpoints[1]
-	y1 = roi.getPolygon().ypoints[0]
-	y2 = roi.getPolygon().ypoints[1]
-	angle = roi.getAngle(x1, y1, x2, y2)
-	# TODO: Find a better way to find angle of rotation of the box
-	if angle > 135:
-		angle = angle - 180
-	if angle < -135:
-		angle = 180 - angle
-	# logging.info("\tBounding box x-coord:%s, y-coord:%s, rot-angle:%s" %
-	# 			 (roi.getPolygon().xpoints, roi.getPolygon().ypoints, angle))
-	return angle
-
-
-def get_rotated_rect_polygon_roi_dims(roi):
 	x1 = roi.getPolygon().xpoints[0]
 	x2 = roi.getPolygon().xpoints[1]
 	x3 = roi.getPolygon().xpoints[2]
 	y1 = roi.getPolygon().ypoints[0]
 	y2 = roi.getPolygon().ypoints[1]
 	y3 = roi.getPolygon().ypoints[2]
+	dist1 = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+	dist2 = math.sqrt((x3 - x2) ** 2 + (y3 - y2) ** 2)
+	if dist1 > dist2:
+		if y1 > y2:
+			angle = roi.getAngle(x1, y1, x2, y2)
+		else:
+			angle = roi.getAngle(x2, y2, x1, y1)
+	else:
+		if y2 > y3:
+			angle = roi.getAngle(x2, y2, x3, y3)
+		else:
+			angle = roi.getAngle(x3, y3, x2, y2)
+	if angle > 90:
+		angle -= 180
+	# logging.info("\tBounding box x-coord:%s, y-coord:%s, rot-angle:%s" %
+	# 			 (roi.getPolygon().xpoints, roi.getPolygon().ypoints, angle))
+	return angle
+
+
+def midpoint(x1, y1, x2, y2):
+	x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
+	return ((x1 + x2) / 2, (y1 + y2) / 2)
+
+
+def get_rotated_rect_polygon_roi_dims(roi):
+	x1 = roi.getFloatPolygon().xpoints[0]
+	x2 = roi.getFloatPolygon().xpoints[1]
+	x3 = roi.getFloatPolygon().xpoints[2]
+	y1 = roi.getFloatPolygon().ypoints[0]
+	y2 = roi.getFloatPolygon().ypoints[1]
+	y3 = roi.getFloatPolygon().ypoints[2]
 	dim1 = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 	dim2 = math.sqrt((x3 - x2) ** 2 + (y3 - y2) ** 2)
-	width = int(math.ceil(max(dim1, dim2)))
-	height = int(math.ceil(min(dim1, dim2)))
-	width -= width % 4 
-	height -= height % 4 
+	width = int(round(max(dim1, dim2)))
+	height = int(round(min(dim1, dim2)))
+	# width -= width % 4 
+	# height -= height % 4 
 	# logging.info("Determined rectangular roi dims before rounding: %s, %s" % (max(dim1, dim2), min(dim1, dim2)))
 	# logging.info("\tRectangular roi dims after rounding: %s, %s" % (width, height))
 	return width, height
