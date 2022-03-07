@@ -9,6 +9,7 @@
 # Last manual update of this line 2022.3.1 :)
 
 from distutils.dir_util import mkpath
+from fileinput import filename
 import math
 import os
 import re
@@ -518,6 +519,25 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				mkpath(montage_dir)
 			save_copressed_tiff(montage_stack, os.path.join(montage_dir, montage_stack_name.get_name()))
 
+			# Save unadjusted montages
+			montage_stack = ImagePlus()
+			montage_stack_name = None
+			for i, tstack_dir in enumerate(tstack_dataset_dirs):
+				stack_path = os.path.join(
+					tstack_dir, get_tiff_name_from_dir(tstack_dir).get_name())
+				imp_stack = IJ.openImage(stack_path)
+				if i == 0:
+					montage_stack = imp_stack.getStack()
+					montage_stack_name = get_tiff_name_from_dir(tstack_dir)
+				if i > 0:
+					montage_stack = StackCombiner.combineHorizontally(StackCombiner(), montage_stack, imp_stack.getStack())
+			montage_stack_name.direction = "(-X)"
+			montage_stack = ImagePlus("montage", montage_stack)
+			montage_dir = os.path.join(root_dataset_dir, MONTAGE_DIR_NAME)
+			if not os.path.exists(montage_dir):
+				mkpath(montage_dir)
+			save_copressed_tiff(montage_stack, os.path.join(montage_dir, montage_stack_name.get_name()))
+
 		if skip_the_dataset == True:
 			logging.info("Had to skip the dataset DS%04d." % dataset_id)
 			continue
@@ -572,7 +592,7 @@ def get_tiff_name_from_dir(input_dir):
 	for fname in os.listdir(input_dir):
 		if fname.lower().endswith(".tif"):
 			file_name = fname
-		break
+			break
 	if file_name == None:
 		raise Exception("Did not find any TIFF files in a directory: %s" % input_dir)
 
@@ -640,11 +660,12 @@ def move_files(raw_images_dir, specimen_directions_in_channels, dataset_id, data
 def is_specimen_input_valid(specimens_per_direction):
 	if not isinstance(specimens_per_direction, tuple):
 		return False
-	possible_specimens_lists = [[0, 1, 2, 3], [4, 5, 6, 7], [
-		8, 9, 10, 11], [12, 13, 14, 15], [16, 17, 18, 19], [20, 21, 22, 23]]
-	if sorted(list(specimens_per_direction)) in possible_specimens_lists:
-		return True
-	return False
+	for i in specimens_per_direction:
+		if not isinstance(i, int):
+			return False
+		if i not in range(1000):
+			return False
+	return True
 
 
 def is_dataset_ID_input_valid(dataset_id):
