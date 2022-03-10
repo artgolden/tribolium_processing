@@ -6,10 +6,9 @@
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.3.1 :)
+# Last manual update of this line 2022.3.10 :)
 
 from distutils.dir_util import mkpath
-from fileinput import filename
 import math
 import os
 import re
@@ -395,7 +394,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					tstack_backup_dir, mproj_stack_file_name.get_name())
 				if not os.path.exists(mproj_stack_path):
 					max_proj_stack = make_max_Z_projections_for_folder(raw_dir)
-					save_copressed_tiff(max_proj_stack, mproj_stack_path)
+					save_tiff(max_proj_stack, mproj_stack_path)
 				else:
 					max_proj_stack = IJ.openImage(mproj_stack_path)
 					logging.info(
@@ -441,7 +440,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 						channel, direction))
 					cropped_tstack = crop_stack_by_template(
 						max_proj_stack, crop_template, dataset)
-					save_copressed_tiff(cropped_tstack, os.path.join(
+					save_tiff(cropped_tstack, os.path.join(
 						tstack_dir, cropped_tstack_file_name.get_name()))
 				else:
 					logging.info("\tChannel: %s Direction: %s Found existing cropped max projected stacks. Using them." % (
@@ -455,16 +454,29 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 				cropped_adjusted_tstack = adjust_histogram_stack(cropped_tstack)
 				cropped_adjusted_tstack_name = cropped_tstack_file_name
 				cropped_adjusted_tstack_name.plane = "(ZN)"
-				save_copressed_tiff(cropped_adjusted_tstack, os.path.join(
+				save_tiff(cropped_adjusted_tstack, os.path.join(
 					contr_dir, cropped_adjusted_tstack_name.get_name()))
 
-				raw_cropped_name = get_tiff_name_from_dir(raw_dir)
-				if not use_cropped_cache or not os.path.exists(os.path.join(raw_cropped_dir, raw_cropped_name.get_name())):
+				ntime_points = len(get_tiffs_in_directory(raw_dir))
+				stacks_done_list = get_tiffs_in_directory(raw_cropped_dir)
+				all_stacks_done = ntime_points == len(stacks_done_list)
+				if use_cropped_cache and all_stacks_done:
+					logging.info("\tChannel: %s Direction: %s Found existing cropped raw stacks, using them." % (
+											channel, direction))
+				else:
 					logging.info(
 						"\tChannel: %s Direction: %s Cropping raw image stacks." % (channel, direction))
 					planes_kept = (0, 0)
-					ntime_points = len(get_tiffs_in_directory(raw_dir))
-					for i, raw_stack_file_name in enumerate(get_tiffs_in_directory(raw_dir)):
+					raw_stack_files = get_tiffs_in_directory(raw_dir)
+					if len(stacks_done_list) > 1:
+						logging.info("\tChannel: %s Direction: %s Found some existing cropped raw stacks, using them." % (
+                                                    channel, direction))
+						files_to_crop = raw_stack_files[len(stacks_done_list) - 1 : ]
+						current_active_stack = len(stacks_done_list)
+					else:
+						files_to_crop = raw_stack_files
+						current_active_stack = 1
+					for i, raw_stack_file_name in enumerate(files_to_crop):
 						raw_stack = IJ.openImage(raw_stack_file_name)
 						IJ.run(raw_stack, "Properties...",
 												"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
@@ -478,8 +490,13 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 														["start"], dataset["planes_to_keep_per_direction"][direction - 1]["end"])
 							else:
 								manual_planes_to_keep = None
+							stack_for_finding_planes = IJ.openImage(raw_stack_files[0])
+							IJ.run(stack_for_finding_planes, "Properties...",
+												"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
+							stack_for_finding_planes = crop_stack_by_template(
+                                                            stack_for_finding_planes, crop_template, dataset)
 							try:
-								planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir, manual_planes_to_keep)
+								planes_kept = find_planes_to_keep(stack_for_finding_planes, m_dir, manual_planes_to_keep)
 							except Exception as e:
 								logging.info("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
 									channel, direction, e))
@@ -493,14 +510,12 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 							logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
 										(channel, direction, planes_kept))
 						logging.info(
-							"\tChannel: %s Direction: %s Cropping Raw stack for timepoint: %s/%s" % (channel, direction, i + 1, ntime_points))
+							"\tChannel: %s Direction: %s Cropping Raw stack for timepoint: %s/%s" % (channel, direction, current_active_stack, ntime_points))
 						raw_stack_cropped = reset_img_properties(raw_stack_cropped, voxel_depth=4)
 						raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
-						save_copressed_tiff(raw_stack_cropped, os.path.join(
+						save_tiff(raw_stack_cropped, os.path.join(
 							raw_cropped_dir, os.path.split(raw_stack_file_name)[1]))
-				else:
-					logging.info("\tChannel: %s Direction: %s Found existing cropped raw stacks, using them." % (
-											channel, direction))
+						current_active_stack += 1
 			montage_stack = ImagePlus()
 			montage_stack_name = None
 			for i, contr_dir in enumerate(contrast_dirs):
@@ -517,7 +532,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			montage_dir = os.path.join(root_dataset_dir, MONTAGE_DIR_NAME)
 			if not os.path.exists(montage_dir):
 				mkpath(montage_dir)
-			save_copressed_tiff(montage_stack, os.path.join(montage_dir, montage_stack_name.get_name()))
+			save_tiff(montage_stack, os.path.join(montage_dir, montage_stack_name.get_name()))
 
 			# Save unadjusted montages
 			montage_stack = ImagePlus()
@@ -536,7 +551,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			montage_dir = os.path.join(root_dataset_dir, MONTAGE_DIR_NAME)
 			if not os.path.exists(montage_dir):
 				mkpath(montage_dir)
-			save_copressed_tiff(montage_stack, os.path.join(montage_dir, montage_stack_name.get_name()))
+			save_tiff(montage_stack, os.path.join(montage_dir, montage_stack_name.get_name()))
 
 		if skip_the_dataset == True:
 			logging.info("Had to skip the dataset DS%04d." % dataset_id)
@@ -693,10 +708,11 @@ def get_tiffs_in_directory(directory):
 		if fname.lower().endswith(".tif"):
 			file_names.append(os.path.join(directory, fname))
 	file_names = sorted(file_names)
-	if len(file_names) < 1:
-		raise Exception("No image files found in %s" % directory)
 	return file_names
 
+
+def sort_tiff_list_by_timepoint(tiff_list):
+	pass
 
 def project_a_stack(stack):
 	"""Project a stack of images along the Z axis 
@@ -725,6 +741,8 @@ def make_max_Z_projections_for_folder(input_dir):
 		ImagePlus: stack of max-projections
 	"""
 	fnames = get_tiffs_in_directory(input_dir)
+	if len(fnames) == 0:
+		raise Exception("No tiffs to process in %s" % input_dir)
 	# Open and stack images
 	img_for_dims = IJ.openImage(fnames[0])
 	stack_list = []
@@ -996,6 +1014,7 @@ def polygon_to_rotated_rect_roi(roi):
 		rot_rect_roi = RotatedRectRoi(rx1, ry1, rx2, ry2, width)
 	return rot_rect_roi
 
+
 def get_polygon_roi_angle(roi):
 	"""Returns an angle between longer line in the rectangular PolygonRoi and horizontal line
 
@@ -1259,7 +1278,7 @@ def adjust_histogram_stack(imp_stack):
 	return adjusted_stack
 
 
-def save_copressed_tiff(image, path):
+def save_tiff(image, path):
 	if os.path.exists(path):
 		os.remove(path)
 	if compress_on_save == False:
