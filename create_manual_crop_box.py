@@ -1,6 +1,9 @@
 #@ Float   (label="How much to rotate the bounding box? (degrees)", value=0, persist=false, style="slider,format:0.0", min=-90, max=90, stepSize=1) rotation_angle
 #@ String (label="Which direction to rotate the embryo", choices={"Right", "Left"}, value=0, style="radioButtonHorizontal") rotation_direction
 
+# Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
+# For detailed documentation go to https://github.com/artgolden/fiji_scripts
+
 from distutils.dir_util import mkpath
 import imp
 import math
@@ -33,15 +36,13 @@ from ij.gui import PointRoi, RotatedRectRoi
 def get_rotated_rect_roi_width():
 	img = WindowManager.getCurrentImage()
 	roi = img.getRoi()
-	# print roi.getClass()
 	x1 = roi.getPolygon().xpoints[0]
 	x2 = roi.getPolygon().xpoints[1]
 	y1 = roi.getPolygon().ypoints[0]
 	y2 = roi.getPolygon().ypoints[1]
 	width = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 	width = (width / 10) * 10
-	# print(x1, y1, x2, y2)
-	# print width
+
 
 
 def get_polygon_roi_angle(roi):
@@ -73,18 +74,12 @@ def get_polygon_roi_angle(roi):
 			angle = roi.getAngle(x3, y3, x2, y2)
 	if angle > 90:
 		angle -= 180
-	# logging.info("\tBounding box x-coord:%s, y-coord:%s, rot-angle:%s" %
-	# 			 (roi.getPolygon().xpoints, roi.getPolygon().ypoints, angle))
 	return angle
 
 
 def get_rotated_rect_roi_dims(roi):
 	x1,	y1,	x2,	y2,	width = roi.getParams()
 	height = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-	# logging.info("Determined rectangular roi height before rounding: %s" % height)
-	# height = round(height / 10) * 10
-	# logging.info("\tRectangular roi height: %s" % height)
-	# print("H, W:", (height, width))
 	return (int(round(width)), int(round(height)))
 
 
@@ -96,8 +91,6 @@ def midpoint(x1, y1, x2, y2):
 def polygon_to_rotated_rect_roi(roi):
 	if isinstance(roi, RotatedRectRoi):
 		return roi
-	print roi.getFloatPolygon().xpoints
-	print roi.getFloatPolygon().ypoints
 	x1 = roi.getFloatPolygon().xpoints[0]
 	x2 = roi.getFloatPolygon().xpoints[1]
 	x3 = roi.getFloatPolygon().xpoints[2]
@@ -113,7 +106,6 @@ def polygon_to_rotated_rect_roi(roi):
 			# For some reason after several rotations rectangle polygon can have 5 points
 			raise Exception(
 				"polygon_to_rotated_rect_roi Can only convert rectangles. Received polygon with %s points. And first and last points are not the same." % roi.getNCoordinates())
-	# print("Original polygon: ", x1, y1, x2, y2, x3, y3, x4, y4)
 	dist1 = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 	dist2 = math.sqrt((x3 - x2) ** 2 + (y3 - y2) ** 2)
 	if dist1 > dist2:
@@ -121,13 +113,11 @@ def polygon_to_rotated_rect_roi(roi):
 		rx1, ry1 = midpoint(x1, y1, x4, y4)
 		rx2, ry2 = midpoint(x2, y2, x3, y3)
 		rot_rect_roi = RotatedRectRoi(rx1, ry1, rx2, ry2, width)
-		# print(x1, y1, x2, y2, width)
 	else:
 		width = dist1
 		rx1, ry1 = midpoint(x1, y1, x2, y2)
 		rx2, ry2 = midpoint(x3, y3, x4, y4)
 		rot_rect_roi = RotatedRectRoi(rx1, ry1, rx2, ry2, width)
-		# print(x2, y2, x3, y3, width)
 	return rot_rect_roi
 
 
@@ -140,9 +130,6 @@ def check_manual_crop_box():
 
 	roi = polygon_to_rotated_rect_roi(roi_input)
 	img.setRoi(roi)
-	#print("Dims: ", get_rotated_rect_roi_dims(roi))
-	#print("Angle: ", get_polygon_roi_angle(roi))
-	# exit()
 	cropped = img.crop()
 	IJ.run(cropped, "Select All", "")
 
@@ -158,5 +145,4 @@ def check_manual_crop_box():
 	cropped.show()
 
 
-# get_rotated_rect_roi_width()
 check_manual_crop_box()

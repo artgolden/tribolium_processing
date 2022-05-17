@@ -6,7 +6,8 @@
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
-# Last manual update of this line 2022.3.10 :)
+# For detailed documentation go to https://github.com/artgolden/fiji_scripts or read the README.md
+# Last manual update of this line 2022.5.17 :)
 
 from distutils.dir_util import mkpath
 import math
@@ -40,8 +41,6 @@ from ij.gui import PointRoi, RotatedRectRoi
 #	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75))
 # 	gives negative values? Make a better solution than just shifting the 150 plane crop.
 #
-# - Allow user to specify manual bounding box.
-# - Write a tutorial inside the script
 # - create a better way of logging histogram adjustments for stacks.
 
 
