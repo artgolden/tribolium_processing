@@ -44,14 +44,14 @@ There is a small script to help you generate this manual crop box: *create_manua
 #### Outputs 
 The script will generate the following folder structure for each dataset:
 ```
-DS0016_MEME6
+DS0001_name
 ├── (B1)-Metadata
 │   └── CH0001
 │       ├── DR0001
 │       │   ├── cropped_max_time_proj.tif
 │       │   ├── crop_template.roi
 │       │   ├── DatasetNamePrefix-DS0016TP(TM)DR0001CH0001PL(ZM).tif
-│       │   └── Y_projected_raw_stack_for_asessment_of_plane_selection.tif
+│       │   └── Y_projected_raw_stack_for_assessment_of_plane_selection.tif
 |       ...
 ├── (B2)-ZStacks
 │   └── CH0001
@@ -90,7 +90,7 @@ DS0016_MEME6
 * **_(B3)-TStacks-ZM_** folder contains maximum Z-projections of each timepoint aggregated in a stack
 * **_(B4)-TStacks-ZN_** the same as _(B3)-TStacks-ZM_ but with adjusted image histogram for better viewing.
 * **_(B5)-TStacks-ZN-Montage_** folder contains montages adjusted and unadjusted Z-projections with directions combined in one image. 
-* **_B_BRANCH_FINISHED_** Is generated when the script has finished processing this dataset. During the processing of the current dataset there will be a _B_BRANCH_ACTIVE_ file, or if the script skipped this dataset with an error - a _B_BRANCH_ERRORED_ file.
+* **_B_BRANCH_FINISHED_** Is generated when the script has finished processing this dataset. During the processing of the current dataset there will be a *B_BRANCH_ACTIVE* file, or if the script skipped this dataset with an error - a *B_BRANCH_ERRORED* file. If the script has crashed, you will see a *B_BRANCH_ACTIVE* file presist at the dataset that was being processed when the script has crashed.
 
 In the directory with all datasets there will be a log file such as *2022-Mar-10-201337-b_branch.log*.
 
@@ -102,6 +102,8 @@ After you click Run in a script editor in Fiji a window will appear.
 - You have an option to use previously cropped stacks if you had run the script on this dataset already. This will continue the script execution from the second to last generated cropped Z-stack.
 - You can launch several scripts with the same JSON file on the same folder with datasets and they will run in parallel. 
 
+You can see output and potential errors in the output window of the script editor or in the log file in the direcotory with all datasets folders (see **Outputs**)
+
 ##### Manual crop box creation
 The script bounding box identification struggles with datasets where embryo flourescence is very low or only on one side. In these cases you need to create a manual crop box for each direction. You can do this as follows:
 - Download create_manual_crop_box.py script the same way you did auto_B_branch_processing.py
@@ -112,9 +114,9 @@ The script bounding box identification struggles with datasets where embryo flou
 - The angle of rotation for bounding box is specified in a window that appears when you run create_manual_crop_box.py script. The rotation of the bounding box persists after the script has been run!
 - When you are satisfied with the bounding rectangle, you need to save it as a ROI object in a file. To do this:
 - Open ROI Manager in Fiji (you can type "roi manager" in Fiji search box)
-    - Click Add 
+    - Click *Add* 
     - Select the newly added item in the ROI Manager
-    - Go to More... and then click Save...
+    - Go to *More...* and then click *Save...*
     - Save the ROI object as a file *manual_crop_box.roi* in the *(B1)-Metadata* folder
 - Repeat this for all directions
 

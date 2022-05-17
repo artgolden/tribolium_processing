@@ -1120,7 +1120,7 @@ def find_planes_to_keep(zstack, meta_dir, manual_planes_to_keep):
 	"""
 	IJ.run(zstack, "Properties...",
 			"pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
-	for_user_asessment = zstack.duplicate()
+	for_user_assessment = zstack.duplicate()
 
 	if manual_planes_to_keep is None:
 		# This variant of implementation does not recalculate the pixel values and does not expand the image.
@@ -1179,21 +1179,21 @@ def find_planes_to_keep(zstack, meta_dir, manual_planes_to_keep):
 	
 	logging.info("\t selected planes to keep: %s-%s" % (start_plane, end_plane))
 	logging.info("\t Cropping Y-projection for user assessment with %s planes" %
-				 for_user_asessment.getNSlices())
+				 for_user_assessment.getNSlices())
 
 	# Save cropped Y-projection for user assessment
-	for_user_asessment = subset_planes(
-		for_user_asessment, (start_plane, end_plane))
+	for_user_assessment = subset_planes(
+		for_user_assessment, (start_plane, end_plane))
 
 	#TODO: Find how to make this headless
-	IJ.run(for_user_asessment, "Reslice [/]...", "output=1 start=Top")
-	for_user_asessment = WindowManager.getCurrentImage()
-	for_user_asessment.hide()
+	IJ.run(for_user_assessment, "Reslice [/]...", "output=1 start=Top")
+	for_user_assessment = WindowManager.getCurrentImage()
+	for_user_assessment.hide()
 
-	for_user_asessment = project_a_stack(for_user_asessment)
-	fs = FileSaver(for_user_asessment)
+	for_user_assessment = project_a_stack(for_user_assessment)
+	fs = FileSaver(for_user_assessment)
 	fs.saveAsTiff(os.path.join(
-		meta_dir, "Y_projected_raw_stack_for_asessment_of_plane_selection.tif"))
+		meta_dir, "Y_projected_raw_stack_for_assessment_of_plane_selection.tif"))
 
 	return (start_plane, end_plane)
 
