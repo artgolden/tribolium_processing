@@ -50,39 +50,39 @@ DS0001_name
 │       ├── DR0001
 │       │   ├── cropped_max_time_proj.tif
 │       │   ├── crop_template.roi
-│       │   ├── DatasetNamePrefix-DS0016TP(TM)DR0001CH0001PL(ZM).tif
+│       │   ├── DatasetNamePrefix-DS0001TP(TM)DR0001CH0001PL(ZM).tif
 │       │   └── Y_projected_raw_stack_for_assessment_of_plane_selection.tif
 |       ...
 ├── (B2)-ZStacks
 │   └── CH0001
 │       ├── DR0001
-│       │   ├── DatasetNamePrefix-DS0016TP0001DR0001CH0001PL(ZS).tif
-│       │   ├── DatasetNamePrefix-DS0016TP0002DR0001CH0001PL(ZS).tif
+│       │   ├── DatasetNamePrefix-DS0001TP0001DR0001CH0001PL(ZS).tif
+│       │   ├── DatasetNamePrefix-DS0001TP0002DR0001CH0001PL(ZS).tif
 |           ...
 ├── (B3)-TStacks-ZM
 │   └── CH0001
 │       ├── DR0001
-│       │   └── DatasetNamePrefix-DS0016TP(TS)DR0001CH0001PL(ZN).tif
+│       │   └── DatasetNamePrefix-DS0001TP(TS)DR0001CH0001PL(ZN).tif
 |       ...
 ├── (B4)-TStacks-ZN
 │   └── CH0001
 │       ├── DR0001
-│       │   └── DatasetNamePrefix-DS0016TP(TS)DR0001CH0001PL(ZN).tif
+│       │   └── DatasetNamePrefix-DS0001TP(TS)DR0001CH0001PL(ZN).tif
 |       ...
 ├── (B5)-TStacks-ZN-Montage
-│   ├── DatasetNamePrefix-DS0016TP(TS)DR(AX)CH0001PL(ZN).tif
-│   └── DatasetNamePrefix-DS0016TP(TS)DR(-X)CH0001PL(ZM).tif
+│   ├── DatasetNamePrefix-DS0001TP(TS)DR(AX)CH0001PL(ZN).tif
+│   └── DatasetNamePrefix-DS0001TP(TS)DR(-X)CH0001PL(ZM).tif
 |       ...
 ├── (P0)-ZStacks-Raw
 |    └── CH0001
 |        ├── DR0001
-|        │   ├── DatasetNamePrefix-DS0016TP0001DR0001CH0001PL(ZS).tif
-|        │   ├── DatasetNamePrefix-DS0016TP0002DR0001CH0001PL(ZS).tif
+|        │   ├── DatasetNamePrefix-DS0001TP0001DR0001CH0001PL(ZS).tif
+|        │   ├── DatasetNamePrefix-DS0001TP0002DR0001CH0001PL(ZS).tif
 |            ...
 └── B_BRANCH_FINISHED
 ```
 * **_(B1)-Metadata_** folder contains files used during cropping of the image in X,Y and Z directions. 
-    * DatasetNamePrefix-DS0016TP(TM)DR0001CH0001PL(ZM).tif maximum projection over Z and time dimensions simultaniously. This file is generated to get all embryo movements in one image and define a crop box around them.
+    * DatasetNamePrefix-DS0001TP(TM)DR0001CH0001PL(ZM).tif maximum projection over Z and time dimensions simultaniously. This file is generated to get all embryo movements in one image and define a crop box around them.
     * cropped_max_time_proj.tif contains cropped maximum time projection. Used for assessment how well the script is cropping the images for this direction.
     * crop_template.roi ROI object from Fiji RoiManager defining the bounding box for cropping the embryo.
     * Y_projected_raw_stack_for_asessment_of_plane_selection.tif - Y projection of the stack to assess how well the script has cropped in Z dimension.
@@ -108,7 +108,7 @@ You can see output and potential errors in the output window of the script edito
 The script bounding box identification struggles with datasets where embryo flourescence is very low or only on one side. In these cases you need to create a manual crop box for each direction. You can do this as follows:
 - Download create_manual_crop_box.py script the same way you did auto_B_branch_processing.py
 - Open it in Fiji script editor
-- Open maximum time and Z-projeciton file *DatasetNamePrefix-DS0016TP(TM)DR0001CH0001PL(ZM).tif* from the *(B1)-Metadata* folder.
+- Open maximum time and Z-projeciton file *DatasetNamePrefix-DS0001TP(TM)DR0001CH0001PL(ZM).tif* from the *(B1)-Metadata* folder.
 - Create a bounding box using rotated rectangle tool in Fiji (can be selected by right clicking on a regular rectangle icon)
 - You can run the create_manual_crop_box.py script to refine your rotated rectangle selection by rotating your bounding rectangle and assess how well the cropping worked. The script will rotate your bounding box by specified rotation angle and crop the selection for assessment
 - The angle of rotation for bounding box is specified in a window that appears when you run create_manual_crop_box.py script. The rotation of the bounding box persists after the script has been run!
