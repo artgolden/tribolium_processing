@@ -1,3 +1,5 @@
+#@ Float   (label="How much to rotate the bounding box? (degrees)", value=0, persist=false, style="slider,format:0.0", min=-90, max=90, stepSize=1) rotation_angle
+#@ String (label="Which direction to rotate the embryo", choices={"Right", "Left"}, value=0, style="radioButtonHorizontal") rotation_direction
 
 from distutils.dir_util import mkpath
 import imp
@@ -134,7 +136,7 @@ def check_manual_crop_box():
 	roi_input = img.getRoi()
 
 	# Specify angle of rotation here
-	roi_input = RoiRotator.rotate(roi_input, 0)
+	roi_input = RoiRotator.rotate(roi_input, round(rotation_angle, ndigits=1))
 
 	roi = polygon_to_rotated_rect_roi(roi_input)
 	img.setRoi(roi)
@@ -152,7 +154,7 @@ def check_manual_crop_box():
 	IJ.run(cropped, "Specify...", "width=%s height=%s x=%s y=%s centered" %
 	       (box_height, box_width, final_center_x, final_center_y))
 	cropped = cropped.crop()
-	IJ.run(cropped, "Rotate 90 Degrees Left", "")
+	IJ.run(cropped, "Rotate 90 Degrees %s" % rotation_direction, "")
 	cropped.show()
 
 
