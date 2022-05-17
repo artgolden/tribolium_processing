@@ -1,6 +1,6 @@
-# Helper scripts for analysis of Tribolium development light-sheet microscopy images 
+# Helper scripts for analysis of light-sheet microscopy images of Tribolium castaneum development
 
-A collection of scripts for Fiji and Python to help in image processing and analysis at AK Stelzer group at Goethe University Frankfurt.
+A collection of scripts for Fiji and Python to help in image processing of light-sheet microscopy images of Tribolium development written at AK Stelzer group at Goethe University Frankfurt.
 
 ### auto_B_branch_processing.py
 A Jython script for Fiji that automates priliminary "B branch" of image processing after microscope aquisition.
@@ -100,6 +100,7 @@ After you click Run in a script editor in Fiji a window will appear.
 - You can specify a dataset name prefix that will be added to the beginning of all image file names.
 - You have an option to copmress the images (IT IS SLOW! currently implemented as BioFormats zlib compression, which is single threaded and thus slow).
 - You have an option to use previously cropped stacks if you had run the script on this dataset already. This will continue the script execution from the second to last generated cropped Z-stack.
+- You can launch several scripts with the same JSON file on the same folder with datasets and they will run in parallel. 
 
 ##### Manual crop box creation
 The script bounding box identification struggles with datasets where embryo flourescence is very low or only on one side. In these cases you need to create a manual crop box for each direction. You can do this as follows:
