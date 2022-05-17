@@ -4,11 +4,11 @@
             "ID": 1,
             "channel_1": {
                 "specimens_for_directions_1234": [
-                5,
-                6,
-                4,
-                7
-                ]                
+                    5,
+                    6,
+                    4,
+                    7
+                ]
             },
             "head_direction": "right",
             "use_manual_bounding_box": false
@@ -32,7 +32,25 @@
                 ]
             },
             "head_direction": "left",
-            "use_manual_bounding_box": false
+            "use_manual_bounding_box": true,
+            "planes_to_keep_per_direction": [
+                {
+                    "start": 1,
+                    "end": 150
+                },
+                {
+                    "start": 10,
+                    "end": 160
+                },
+                {
+                    "start": 1,
+                    "end": 150
+                },
+                {
+                    "start": 1,
+                    "end": 150
+                }
+            ]
         }
     ]
 }
