@@ -44,8 +44,7 @@ from emblcmci import BleachCorrection_MH
 #TODO:
 #	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75))
 # 	gives negative values? Make a better solution than just shifting the 150 plane crop.
-#
-# - create a better way of logging histogram adjustments for stacks.
+
 
 
 
@@ -553,7 +552,10 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			if do_histogram_matching:
 				match_histograms_stack(adj_montage_stack)
 				adj_montage_stack_name.plane = "(ZH)"
-			adj_montage_stack = threshold_histogram_stack(adj_montage_stack)
+			adj_montage_stack, histogram_thresholds = threshold_histogram_stack(adj_montage_stack)
+			histogram_thresholds = {"lower_threshold": histogram_thresholds[0], "upper_threshold": histogram_thresholds[1]}
+			with open(os.path.join(meta_dir, chan_dir_name, "histogram_thresholds_used_for_contrast_adjustment.JSON"), "w") as hist_json:
+				json.dump(histogram_thresholds, hist_json, indent=4)
 			
 			save_tiff(adj_montage_stack, os.path.join(montage_dir, adj_montage_stack_name.get_name()))
 
@@ -594,7 +596,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			if do_histogram_matching:
 				match_histograms_stack(vert_montage_stack)
 				vert_montage_stack_name.plane = "(ZH)"
-			vert_montage_stack = threshold_histogram_stack(vert_montage_stack)
+			vert_montage_stack, _ = threshold_histogram_stack(vert_montage_stack)
 			montage_dir = os.path.join(root_dataset_dir, MONTAGE_DIR_NAME)
 			if not os.path.exists(montage_dir):
 				mkpath(montage_dir)
@@ -1344,7 +1346,7 @@ def threshold_histogram_stack(imp_stack):
 		Exception: Not a 16-bit image has been provided.
 
 	Returns:
-		ImagePlus: adjusted stack of images
+		(ImagePlus, (int, int)): a tuple of adjusted stack of images and a tuple of lower and upper histogram thresholds used for adjustment
 	"""
 	if imp_stack.getBitDepth() != 16:
 		raise Exception("Only 16-bit images can be auto histogram adjusted.")
@@ -1361,7 +1363,7 @@ def threshold_histogram_stack(imp_stack):
 		adjusted_stack.append(imp2)
 	adjusted_stack = ImagePlus(
 		"Adjusted contrast", ImageStack.create(adjusted_stack))
-	return adjusted_stack
+	return (adjusted_stack, histogram_thresholds)
 
 
 def save_tiff(image, path):
@@ -1417,7 +1419,6 @@ def split_montage_stack_to_list_of_stacks(montage_image_stack, nrows, ncols, bor
 	list_of_stacks = [ImageStack() for i in range(nstacks)]
 	montage_stack = montage_image_stack.getImageStack()
 	for plane_index in range(1, montage_stack.getSize() + 1):
-		print("Splitting plane %s" % plane_index)
 		plane = montage_stack.getProcessor(plane_index)
 		stack_from_montage = split_montage_image_to_stack(plane, nrows, ncols, border_width)
 		for i, new_stack in enumerate(list_of_stacks):
