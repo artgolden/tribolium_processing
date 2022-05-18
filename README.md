@@ -67,11 +67,12 @@ DS0001_name
 ├── (B4)-TStacks-ZN
 │   └── CH0001
 │       ├── DR0001
-│       │   └── DatasetNamePrefix-DS0001TP(TS)DR0001CH0001PL(ZN).tif
+│       │   └── DatasetNamePrefix-DS0001TP(TS)DR0001CH0001PL(ZH).tif
 |       ...
 ├── (B5)-TStacks-ZN-Montage
-│   ├── DatasetNamePrefix-DS0001TP(TS)DR(AX)CH0001PL(ZN).tif
-│   └── DatasetNamePrefix-DS0001TP(TS)DR(-X)CH0001PL(ZM).tif
+│   ├── DatasetNamePrefix-DS0001TP(TS)DR(AX)CH0001PL(ZM).tif
+|   ├── DatasetNamePrefix-DS0001TP(TS)DR(AX)CH0001PL(ZH).tif
+│   └── DatasetNamePrefix-DS0001TP(TS)DR(AY)CH0001PL(ZH).tif
 |       ...
 ├── (P0)-ZStacks-Raw
 |    └── CH0001
@@ -88,8 +89,8 @@ DS0001_name
     * Y_projected_raw_stack_for_asessment_of_plane_selection.tif - Y projection of the stack to assess how well the script has cropped in Z dimension.
 * **_(B2)-ZStacks_** folder contains cropped raw Z-stacks with each timepoint as a separate file.
 * **_(B3)-TStacks-ZM_** folder contains maximum Z-projections of each timepoint aggregated in a stack
-* **_(B4)-TStacks-ZN_** the same as _(B3)-TStacks-ZM_ but with adjusted image histogram for better viewing.
-* **_(B5)-TStacks-ZN-Montage_** folder contains montages adjusted and unadjusted Z-projections with directions combined in one image. 
+* **_(B4)-TStacks-ZN_** the same as _(B3)-TStacks-ZM_ but with adjusted image histogram for better viewing. Files ending with "PL(ZA)" are adjusted by thresholding the histogram and with "PL(ZH)" adjusted with histograms matched between all planes and thresholded.
+* **_(B5)-TStacks-ZN-Montage_** folder contains montages adjusted and unadjusted Z-projections with directions combined in one image. Files ending with "PL(ZM)" are unadjusted, with "PL(ZA)" adjusted by thresholding the histogram and with "PL(ZH)" adjusted with histograms matched between all planes and thresholded.
 * **_B_BRANCH_FINISHED_** Is generated when the script has finished processing this dataset. During the processing of the current dataset there will be a *B_BRANCH_ACTIVE* file, or if the script skipped this dataset with an error - a *B_BRANCH_ERRORED* file. If the script has crashed, you will see a *B_BRANCH_ACTIVE* file presist at the dataset that was being processed when the script has crashed.
 
 In the directory with all datasets there will be a log file such as *2022-Mar-10-201337-b_branch.log*.
