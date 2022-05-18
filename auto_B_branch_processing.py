@@ -8,7 +8,7 @@
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 # For detailed documentation go to https://github.com/artgolden/fiji_scripts or read the README.md
-# Last manual update of this line 2022.5.17 :)
+# Last manual update of this line 2022.5.18 :)
 
 from distutils.dir_util import mkpath
 import math
@@ -46,7 +46,7 @@ from emblcmci import BleachCorrection_MH
 # 	gives negative values? Make a better solution than just shifting the 150 plane crop.
 #
 # - create a better way of logging histogram adjustments for stacks.
-# - Make montages stacked vertically
+
 
 
 EXAMPLE_JSON_METADATA_FILE = """
@@ -533,7 +533,8 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					montage_stack_name = get_tiff_name_from_dir(tstack_dir)
 				if direction > 0:
 					montage_stack = StackCombiner.combineHorizontally(StackCombiner(), montage_stack, imp_stack.getStack())
-			montage_stack_name.direction = "(-X)"
+			montage_stack_name.direction = "(AX)"
+			montage_stack_name.plane = "(ZM)"
 			montage_stack = ImagePlus("montage", montage_stack)
 			montage_dir = os.path.join(root_dataset_dir, MONTAGE_DIR_NAME)
 			if not os.path.exists(montage_dir):
@@ -571,7 +572,33 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					adj_stack_name.plane = "(ZH)"
 			
 				save_tiff(adj_max_proj_stack, os.path.join(contr_dir, adj_stack_name.get_name()))
-				
+			
+			# Save adjusted vertical montages
+
+			logging.info("\tChannel: %s Creating adjusted vertical montages from max projections." % (
+                            channel))
+			vert_montage_stack = ImagePlus()
+			vert_montage_stack_name = None
+			for direction, tstack_dir in enumerate(tstack_dataset_dirs):
+				stack_path = os.path.join(
+					tstack_dir, get_tiff_name_from_dir(tstack_dir).get_name())
+				imp_stack = IJ.openImage(stack_path)
+				if direction == 0:
+					vert_montage_stack = imp_stack.getStack()
+					vert_montage_stack_name = get_tiff_name_from_dir(tstack_dir)
+				if direction > 0:
+					vert_montage_stack = StackCombiner.combineVertically(StackCombiner(), vert_montage_stack, imp_stack.getStack())
+			vert_montage_stack_name.direction = "(AY)"
+			vert_montage_stack_name.plane = "(ZA)"
+			vert_montage_stack = ImagePlus("montage", vert_montage_stack)
+			if do_histogram_matching:
+				match_histograms_stack(vert_montage_stack)
+				vert_montage_stack_name.plane = "(ZH)"
+			vert_montage_stack = threshold_histogram_stack(vert_montage_stack)
+			montage_dir = os.path.join(root_dataset_dir, MONTAGE_DIR_NAME)
+			if not os.path.exists(montage_dir):
+				mkpath(montage_dir)
+			save_tiff(vert_montage_stack, os.path.join(montage_dir, vert_montage_stack_name.get_name()))
 
 		if skip_the_dataset == True:
 			logging.info("Had to skip the dataset DS%04d." % dataset_id)
