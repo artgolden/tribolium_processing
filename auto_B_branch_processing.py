@@ -3,7 +3,7 @@
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 # @ Boolean (label='Compress images?', value=true) compress_on_save
 # @ Boolean (label='Use previously cropped stacks (if present)?', value=false) use_cropped_cache
-# @ Boolean (label='Do histogram matching adjustment?', value=false) do_histogram_matching
+# @ Boolean (label='Do histogram matching adjustment?', value=true) do_histogram_matching
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
@@ -46,6 +46,7 @@ from emblcmci import BleachCorrection_MH
 # 	gives negative values? Make a better solution than just shifting the 150 plane crop.
 #
 # - create a better way of logging histogram adjustments for stacks.
+# - Make montages stacked vertically
 
 
 EXAMPLE_JSON_METADATA_FILE = """
@@ -547,9 +548,10 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			adj_montage_stack = montage_stack
 			adj_montage_stack_name = montage_stack_name
 			adj_montage_stack_name.direction = "(AX)"
+			adj_montage_stack_name.plane = "(ZA)"
 			if do_histogram_matching:
 				match_histograms_stack(adj_montage_stack)
-				adj_montage_stack_name.direction = "(HX)"
+				adj_montage_stack_name.plane = "(ZH)"
 			adj_montage_stack = threshold_histogram_stack(adj_montage_stack)
 			
 			save_tiff(adj_montage_stack, os.path.join(montage_dir, adj_montage_stack_name.get_name()))
@@ -732,6 +734,7 @@ def get_tiffs_in_directory(directory):
 
 def sort_tiff_list_by_timepoint(tiff_list):
 	pass
+
 
 def project_a_stack(stack):
 	"""Project a stack of images along the Z axis 
@@ -1281,7 +1284,7 @@ def get_histogram_thresholds(image_processor):
 	sum_elem_above_threshold = sum(hist[i] for i in range(lower_threshold, len(hist)))
 
 	# making it so 1% of all pixels will be overexposed
-	num_overexposed_pixels_threshold = PERCENT_OVEREXPOSED_PIXELS / 100 * sum_elem_above_threshold
+	num_overexposed_pixels_threshold = float(PERCENT_OVEREXPOSED_PIXELS) / 100 * sum_elem_above_threshold
 	for i, num_pixels_with_this_value in reversed(list(enumerate(hist))):
 		num_overexposed_pixels += num_pixels_with_this_value
 		if num_overexposed_pixels > num_overexposed_pixels_threshold:
@@ -1323,6 +1326,8 @@ def threshold_histogram_stack(imp_stack):
 	nplanes = imp_stack.getNSlices()
 	middle_plane = int(round(float(nplanes) / 2))
 	histogram_thresholds = get_histogram_thresholds(stack.getProcessor(middle_plane))
+	logging.info("Adjusted stack with thresholds: %s, %s." % (
+            histogram_thresholds[0], histogram_thresholds[1]))
 	for i in range(1, nplanes + 1):
 		imp2 = ImagePlus("slice_iterator", stack.getProcessor(i))
 		auto_contrast_by_histogram_thresholds(imp2, histogram_thresholds)
