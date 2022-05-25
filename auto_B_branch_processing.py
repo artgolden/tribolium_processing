@@ -851,7 +851,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset, dataset_minimal
 	imp = max_time_projection
 
 	if dataset["use_manual_bounding_box"] == True:
-		logging.info("\tUsing manualy specified corop box.")
+		logging.info("\tUsing manualy specified crop box.")
 		manual_roi = RoiDecoder(os.path.join(meta_dir, "%s.roi" % MANUAL_CROP_BOX_FILE_NAME)).getRoi()
 		rot_angle = round(get_polygon_roi_angle(manual_roi), ndigits=1)
 		# Always assuming that embryo is horizontal

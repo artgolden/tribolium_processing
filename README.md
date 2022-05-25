@@ -19,13 +19,18 @@ Input folder strucutre:
 ```
 ├── DS0001_name
 │   └── (P0)-ZStacks-Raw
-│   │   ├── DatasetNamePrefix-DS0001TP(TS)DR(AX)CH0001PL(ZN).tif
-│   │   └── DatasetNamePrefix-DS0001TP(TS)DR(MT)CH0001PL(ZN).tif
+│   │   ├── <Dataset specific name>TM13155919SPC000TL0000ANG000FRQ000PH00CM0CHN00.tif
+│   │   ├── <Dataset specific name>TM13155919SPC000TL0001ANG000FRQ000PH00CM0CHN00.tif
+│   │   ├── <Dataset specific name>TM13155919SPC001TL0000ANG000FRQ000PH00CM0CHN00.tif
+│   │   ├── <Dataset specific name>TM13155919SPC001TL0001ANG000FRQ000PH00CM0CHN00.tif
+|   |   ...
 ├── DS0002_another_name
 │   └── (P0)-ZStacks-Raw
 └── DS0003_another_name
     └── (P0)-ZStacks-Raw
 ```
+
+Tiff files in the *(P0)-ZStacks-Raw* are separate for each timepoint and view. Speciments and views of each specimen are encoded in "SPCXXXX" part of the file name, hence for correspondace between which SPC values are which views for which sample you need to specify metadata in the JSON (see below). Timepoints are specified in "TLXXXX" part of the file name. The script currently is written for stacks with dimensions 1392x1040x179 and will probably not work with significatly different ones.
 
 An example JSON metadata file can be found in the repository: metadata_TEMPLATE.json
 For each folder with datasets you need to write such JSON file, where:
@@ -36,7 +41,7 @@ For each folder with datasets you need to write such JSON file, where:
 - **"planes_to_keep_per_direction"** - is a list where indexes are directions for which you specify manually which planes will be kept in the image. Currently you have to specify which planes to keep for all directions if you are using this parameter.
 Consider using a text editor such as VSCode that supports good syntax hilighting for JSON files as well as syntax error checking.
 
-If you have already organised files in *(P0)-ZStacks-Raw* folder from the previous run, you can you this as well.
+If you have already organised files in *(P0)-ZStacks-Raw* folder from the previous run, you can you this as well. Then your files in *(P0)-ZStacks-Raw* folder should look like it is shown in the outputs.
 
 _Optional manual crop box input:_ you can put a file with the name *manual_crop_box.roi* that will contain a ROI object saved from Fiji RoiManager that specifies a crop box around an embryo that will be used for this direction if the parameter "use_manual_bounding_box" is set to TRUE in the JSON file.
 There is a small script to help you generate this manual crop box: *create_manual_crop_box.py*
