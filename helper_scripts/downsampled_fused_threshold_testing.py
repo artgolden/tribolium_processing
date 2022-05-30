@@ -99,7 +99,7 @@ def fuse_dataset(dataset_dir, file_pattern, timepoints, angles_from_to):
 
     IJ.run(
         "Detect Interest Points for Pairwise Registration",
-        "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x sigma=%s threshold=%s find_maxima compute_on=[CPU (Java)]"
+        "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima compute_on=[CPU (Java)]"
         % (dataset_xml, sigma, threshold))
 
     IJ.run(
@@ -157,8 +157,8 @@ def downsample_image_stack(stack, new_width, sourceSigma=0.5, targetSigma=0.5):
     return downsampled_imp
 
 
-def project_image(image, dim_to_project, projection_type):
-    data = convert.convert(image, Dataset)
+def project_image(image_stack, dim_to_project, projection_type):
+    data = convert.convert(image_stack, Dataset)
 
     # Select which dimension to project
     dim = data.dimensionIndex(getattr(Axes, dim_to_project))
