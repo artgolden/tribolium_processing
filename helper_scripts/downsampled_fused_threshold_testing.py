@@ -1,13 +1,17 @@
 # @ File(label='Input directory with all datasets', style='directory') input_datasets_dir
 # @ File(label='Results directory', style='directory') results_dir
+# @ Boolean (label='Use previously fused datasets?', value=false) use_fused_cache
 #@ OpService ops
 #@ DatasetService ds
 #@ ConvertService convert
+
+# Script downsamples first, middle and last timepoints from each direction from the raw images folder. Fuses the downsampled images, makes Z and Y projections for each timepoint and produces a threshold montage for each projection.
 
 import os
 import re
 import math
 from distutils.dir_util import mkpath
+import xml.etree.ElementTree as ET
 
 
 from java.io import File
@@ -76,11 +80,30 @@ def get_tiffs_in_directory(directory):
 	return file_names
 
 
+def get_bounding_box_coords_from_file(xml_path, box_name):
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    for box in root.iter('BoundingBoxDefinition'):
+         if box.attrib["name"] == box_name:
+             min = box.find("min").text.split(" ")
+             max = box.find("max").text.split(" ")
+             box_coords = {
+                 "x_min" : int(min[0]),
+                 "y_min" : int(min[1]),
+                 "z_min" : int(min[2]),
+                 "x_max" : int(max[0]),
+                 "y_max" : int(max[1]),
+                 "z_max" : int(max[2])
+             }
+    return box_coords
+
+
 def fuse_dataset(dataset_dir, file_pattern, timepoints, angles_from_to):
     dataset_xml_name = "dataset.xml"
     dataset_xml = os.path.join(dataset_dir, "dataset.xml")
-    sigma = 1.80150
-    threshold = 0.00797
+    sigma = 2.0
+    threshold = 0.01
+    max_detections_per_view = 1000
 
     redundancy = 1
     significance = 10
@@ -99,8 +122,8 @@ def fuse_dataset(dataset_dir, file_pattern, timepoints, angles_from_to):
 
     IJ.run(
         "Detect Interest Points for Pairwise Registration",
-        "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima compute_on=[CPU (Java)]"
-        % (dataset_xml, sigma, threshold))
+        "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima maximum_number=%s type_of_detections_to_use=Brightest compute_on=[CPU (Java)]"
+        % (dataset_xml, sigma, threshold, max_detections_per_view))
 
     IJ.run(
         "Register Dataset based on Interest Points",
@@ -120,7 +143,7 @@ def fuse_dataset(dataset_dir, file_pattern, timepoints, angles_from_to):
     print("saving fused dataset to: ", output_fused_path)
     IJ.run(
         "Fuse dataset ...",
-        "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=[All Views] downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml, output_fused_path))
+        "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=max_box downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml, output_fused_path))
 
 
 def downsample_image_stack(stack, new_width, sourceSigma=0.5, targetSigma=0.5):
@@ -192,6 +215,7 @@ def make_threshold_montage(image):
     montage = WindowManager.getImage("Montage")
     return montage
 
+
 def process_dataset(input_dataset_dir, results_dir):
 
     raw_img_dir = os.path.join(input_dataset_dir, RAW_IMAGES_DIR_NAME, "CH0001", "DR0001")
@@ -213,23 +237,28 @@ def process_dataset(input_dataset_dir, results_dir):
     view_image_name = last_timepoint_name
 
     for tp in timepoints_to_downsample:
-
         for direction, direction_dir in zip(range(1, 5), direction_dirs):
             view_image_name.time_point = "%04d" % tp
             view_image_name.direction = "%04d" % direction
+            downsampled_path = os.path.join(results_dir, dataset_name, view_image_name.get_name())
+            if os.path.exists(downsampled_path):
+                print("Found existing file %s, skipping downsampling." % downsampled_path)
+                continue
 
             full_image_path = os.path.join(direction_dir, view_image_name.get_name())
-            print(full_image_path)
             full_image = IJ.openImage(full_image_path)
             downsampled_image = downsample_image_stack(full_image, full_image.getWidth() / 4)
-            print("saving")
+            print("Saving downsampled image to %s" % downsampled_path)
             fs = FileSaver(downsampled_image)
             fs.saveAsTiff(os.path.join(results_dir, dataset_name, view_image_name.get_name()))
     fuse_file_pattern = last_timepoint_name
     fuse_file_pattern.direction = "{aaaa}"
     fuse_file_pattern.time_point = "{tttt}"
-    print(fuse_file_pattern.get_name())
-    fuse_dataset(results_subdir, fuse_file_pattern.get_name(), timepoints_to_downsample, (1, 4))
+    if os.path.exists(os.path.join(results_subdir, "fused.xml")) and use_fused_cache == True:
+        print("Skipping fusion for %s, found exiting fused.xml file." % results_subdir)
+    else:
+        print("Fusing: " + fuse_file_pattern.get_name())
+        fuse_dataset(results_subdir, fuse_file_pattern.get_name(), timepoints_to_downsample, (1, 4))
 
     for tp in timepoints_to_downsample:
         fused_file_path = os.path.join(results_subdir, "fused_tp_%s_ch_0.tif" % tp)
@@ -241,23 +270,25 @@ def process_dataset(input_dataset_dir, results_dir):
         RankFilters().rank(y_projection.getProcessor(), 4, RankFilters.MEDIAN)
 
         fs = FileSaver(z_projection)
-        fs.saveAsTiff(os.path.join(results_subdir, "z_max_projection.tiff"))
+        fs.saveAsTiff(os.path.join(results_subdir, "tp_%s_z_max_projection.tiff" % tp))
         fs = FileSaver(y_projection)
-        fs.saveAsTiff(os.path.join(results_subdir, "y_max_projection.tiff"))
+        fs.saveAsTiff(os.path.join(results_subdir, "tp_%s_y_max_projection.tiff" % tp))
 
         z_montage = make_threshold_montage(z_projection)
-        print("Z_mont:", z_montage.getClass())
+        z_montage_resized = z_montage.resize(1800, 1200, "bilinear")
 
-        fs = FileSaver(z_montage)
+        fs = FileSaver(z_montage_resized)
         output_z_montage_name = view_image_name
         output_z_montage_name.dataset_name = dataset_name + "_Z_threshold_montage"
         output_z_montage_name.direction = "(ZM)"
         output_z_montage_name.time_point = "%04d" % tp
         fs.saveAsTiff(os.path.join(results_dir, output_z_montage_name.get_name()))
+        print("Saving threshold montage to: %s" % os.path.join(results_dir, output_z_montage_name.get_name()))
         z_montage.close()
 
         y_montage = make_threshold_montage(y_projection)
-        fs = FileSaver(y_montage)
+        y_montage_resized = y_montage.resize(1800, 1200, "bilinear")
+        fs = FileSaver(y_montage_resized)
         output_y_montage_name = view_image_name
         output_y_montage_name.dataset_name = dataset_name + "_Y_threshold_montage"
         output_y_montage_name.direction = "(ZM)"
