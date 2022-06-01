@@ -48,4 +48,4 @@ def project_image(image, dim_to_project, projection_type):
     o = ImagePlus("projection", ip)
     return o
 
-output = project_image(imp, "Z", "Max")
+output = project_image(imp, projected_dimension, projection_type)
