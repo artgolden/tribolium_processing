@@ -1,4 +1,13 @@
-#@ ImagePlus max_projection
+# ImagePlus max_projection
+#@ OpService ops
+#@ DatasetService ds
+#@ ConvertService convert
+
+ 
+from net.imagej.axis import Axes
+from net.imagej.ops import Ops
+from net.imagej import Dataset
+
 
 from distutils.dir_util import mkpath
 import math
@@ -9,6 +18,7 @@ import json
 import logging
 from datetime import datetime
 import traceback
+import xml.etree.ElementTree as ET
 
 
 from java.io import File
@@ -34,6 +44,7 @@ from ij.io import RoiDecoder
 from ij.gui import PointRoi, RotatedRectRoi
 from emblcmci import BleachCorrection_MH
 
+
 def get_median_intensity(image):
     image.resetRoi()
     IJ.run("Clear Results")
@@ -41,7 +52,7 @@ def get_median_intensity(image):
     analyzer = Analyzer(image, Measurements.MEDIAN, table)
     analyzer.measure()
     median = round(table.getValue("Median", 0), ndigits=0)
-    print("Median value is %s" % median)
+    print("Median image intensity is %s" % median)
     return median
 
 
@@ -52,7 +63,7 @@ def get_mean_intensity(image):
     analyzer = Analyzer(image, Measurements.MEAN, table)
     analyzer.measure()
     mean = round(table.getValue("Mean", 0), ndigits=0)
-    print("Mean value is %s" % mean)
+    print("Mean image intensity is %s" % mean)
     return mean
 
 
@@ -128,7 +139,7 @@ def bounding_roi_and_params_from_embryo_mask(mask, spacing_around_embryo=10):
     rot_angle = round(table.getValue("Angle", 0), ndigits=1)
     if rot_angle > 90:
         rot_angle -= 180
-    print("\t Angle of the elipse fitted onto the embryo: %s", rot_angle)
+    # print("\t Angle of the elipse fitted onto the embryo: %s", rot_angle)
 
     roi_arr = roim.getRoisAsArray()
     roim.runCommand('reset')
@@ -191,7 +202,7 @@ def bounding_roi_and_params_from_embryo_mask(mask, spacing_around_embryo=10):
     cropped_bounding_roi = mask_cropped.getRoi()
     embryo_length = cropped_bounding_roi.getBounds().width
     embryo_width = cropped_bounding_roi.getBounds().height
-    print("\tEmbryo dims: (%s, %s)" % (embryo_length, embryo_width))
+    # print("\tEmbryo dims: (%s, %s)" % (embryo_length, embryo_width))
     embryo_cropped_rot_center_x = cropped_bounding_roi.getContourCentroid()[0]
     embryo_cropped_rot_center_y = cropped_bounding_roi.getContourCentroid()[1]
     # Transform the embryo center coordinates with the inverse rotation
@@ -210,7 +221,7 @@ def bounding_roi_and_params_from_embryo_mask(mask, spacing_around_embryo=10):
     embryo_center_y = embryo_cropped_center_y + yn
     
     
-    print("\tEmbryo center: (%s, %s)" % (embryo_center_x, embryo_center_y))
+    # print("\tEmbryo center: (%s, %s)" % (embryo_center_x, embryo_center_y))
     box_width = embryo_length + spacing_around_embryo + 4 - embryo_length % 4
     box_height = embryo_width + spacing_around_embryo + 4 - embryo_width % 4
     IJ.run(mask, "Specify...", "width=%s height=%s x=%s y=%s centered" %
@@ -223,12 +234,13 @@ def bounding_roi_and_params_from_embryo_mask(mask, spacing_around_embryo=10):
         "embryo_length" : embryo_length,
         "embryo_width" : embryo_width,
         "embryo_center_x" : embryo_center_x,
-        "embryo_center_y" : embryo_center_y
+        "embryo_center_y" : embryo_center_y,
+        "bounding_rect_angle" : rot_angle
     }
     return bounding_roi
 
 
-def get_embryo_bounding_rectangle_and_params(max_projection):
+def get_embryo_bounding_rectangle_and_params(max_projection, show_mask=False):
 
     fill_zero_pixels_with_median_intensity(max_projection)
     image_hist = max_projection.getProcessor().getHistogram()
@@ -241,7 +253,8 @@ def get_embryo_bounding_rectangle_and_params(max_projection):
     else:
         print("Image average intesity > %s using mean threshold." % threshold_choosing_intensity)
         mask = get_embryo_mask(image_16bit=max_projection, threshold_type="mean")   
-    mask.show() 
+    if show_mask:
+        mask.show() 
 
     num_mask_smoothening_iterations = int(round(mask.getWidth() * 0.028))
     # removing dirt, fixing edges
@@ -250,9 +263,51 @@ def get_embryo_bounding_rectangle_and_params(max_projection):
     bounding_roi_stuff = bounding_roi_and_params_from_embryo_mask(mask=mask, spacing_around_embryo=8)
     return bounding_roi_stuff
 
+def project_image(image, dim_to_project, projection_type):
+    data = convert.convert(image, Dataset)
 
 
-bounding_roi_stuff = get_embryo_bounding_rectangle_and_params(max_projection=max_projection)
-print(bounding_roi_stuff)
-max_projection.setRoi(bounding_roi_stuff["bounding_roi_rect"])
-    
+    # Select which dimension to project
+    dim = data.dimensionIndex(getattr(Axes, dim_to_project))
+
+    if dim == -1:
+        raise Exception("%s dimension not found." % dim_to_project)
+
+    if data.dimension(dim) < 2:
+        raise Exception("%s dimension has only one frame." % dim_to_project)
+
+    # Write the output dimensions
+    new_dimensions = [data.dimension(d) for d in range(0, data.numDimensions()) if d != dim]
+
+    # Create the output image
+    projected = ops.create().img(new_dimensions)
+
+
+    # Create the op and run it
+    proj_op = ops.op(getattr(Ops.Stats, projection_type), data)
+    ops.transform().project(projected, data, proj_op, dim)
+
+    projected = ops.run("convert.uint16", projected)
+
+    out = ds.create(projected)
+    o = convert.convert(out, ImagePlus)
+    ip = o.getProcessor()
+    o = ImagePlus("projection", ip)
+    return o
+
+fused_stack = IJ.openImage("/media/tema/big_storage/work/goethe/fiji/test_dataset/DS0016_MEME6/downsampled_dataset/tiff_fused/fused_tp_1_ch_0.tif")
+z_projection = project_image(fused_stack, "Z", "Max")
+y_projection = project_image(fused_stack, "Y", "Max")
+z_bounding_roi = get_embryo_bounding_rectangle_and_params(max_projection=z_projection)
+y_bounding_roi = get_embryo_bounding_rectangle_and_params(max_projection=y_projection)
+
+if abs(z_bounding_roi["embryo_center_x"] - y_bounding_roi["embryo_center_x"]) > 5:
+    print("Could not reliably determine embryo X center position from Z and Y projections.")
+
+
+print("Embryo box params from Z projection:\n%s" % z_bounding_roi)
+print("Embryo box params from Y projection:\n%s " % y_bounding_roi)
+z_projection.setRoi(z_bounding_roi["bounding_roi_rect"])
+y_projection.setRoi(y_bounding_roi["bounding_roi_rect"])
+z_projection.show()
+y_projection.show()
