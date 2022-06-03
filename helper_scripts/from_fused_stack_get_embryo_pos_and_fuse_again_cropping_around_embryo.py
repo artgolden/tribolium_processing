@@ -356,11 +356,14 @@ def fuse_dataset_to_display(dataset_xml_path, bounding_box_name):
     IJ.run("Fuse dataset ...", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each timepoint & channel] fused_image=[Display using ImageJ]" % (dataset_xml_path, bounding_box_name))
 
 
-identity_matrix = [[0 for col in range(4)] for row in range(4)]
-identity_matrix[0][0] = 1
-identity_matrix[1][1] = 1
-identity_matrix[2][2] = 1
-identity_matrix[3][3] = 1
+def get_4_4_identity_matrix():
+    identity_matrix = [[0 for col in range(4)] for row in range(4)]
+    identity_matrix[0][0] = 1
+    identity_matrix[1][1] = 1
+    identity_matrix[2][2] = 1
+    identity_matrix[3][3] = 1
+    return identity_matrix
+
 
 def multiply_matrices(X, Y):
 	C = [[0 for col in range(len(Y[0]))] for row in range(len(X))]
@@ -435,7 +438,7 @@ z_projection.show()
 y_projection.show()
 
 
-transformation_embryo_to_center = identity_matrix
+transformation_embryo_to_center = get_4_4_identity_matrix()
 transformation_embryo_to_center[0][3] = z_bounding_roi["embryo_center_x"]
 transformation_embryo_to_center[1][3] = z_bounding_roi["embryo_center_y"]
 transformation_embryo_to_center[2][3] = y_bounding_roi["embryo_center_y"]
