@@ -95,7 +95,7 @@ def get_tiffs_in_directory(directory):
 	file_names = sorted(file_names)
 	return file_names
 
-def get_image_dims_from_file(path_to_image):
+def get_image_dimensions_from_file(path_to_image):
     image = IJ.openImage(path_to_image)
     return (image.getWidth(), image.getHeight(), image.getStackSize())
 
@@ -502,12 +502,12 @@ def get_fusion_tranformation_from_xml_file(xml_path):
     return False
 
 
-def rotate_dataset(dataset_xml_path, axis_of_rotation, angle, timepoint=0):
+def rotate_bigstitcher_dataset(dataset_xml_path, axis_of_rotation, angle, timepoint=0):
     print("Rotating dataset around: %s for angle=%s" % (axis_of_rotation, angle))
     IJ.run("Apply Transformations", "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Rigid apply=[Current view transformations (appends to current transforms)] define=[Rotation around axis] same_transformation_for_all_angles axis_timepoint_%s_channel_0_illumination_0_all_angles=%s-axis rotation_timepoint_%s_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, timepoint,  axis_of_rotation, timepoint, angle))
 
 
-def apply_transformation_dataset(dataset_xml_path, affine_matrix, timepoint=0):
+def apply_transformation_bigstitcher_dataset(dataset_xml_path, affine_matrix, timepoint=0):
     short_affine_matrix = [0 for i in range(12)]
     for i in range(len(affine_matrix) - 1):
         for j in range(len(affine_matrix[0])):
@@ -650,7 +650,7 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
     transformation_embryo_to_center = inverse_matrix(transformation_embryo_to_center)
     print("transformation_embryo_to_center matrix %s" % transformation_embryo_to_center)
 
-    apply_transformation_dataset(raw_dataset_xml_path, transformation_embryo_to_center)
+    apply_transformation_bigstitcher_dataset(raw_dataset_xml_path, transformation_embryo_to_center)
     embryo_crop_box = {
         "x_min" : -1 * int(z_bounding_roi["embryo_length"] / 2 + 5),
         "y_min" : -1 * int(z_bounding_roi["embryo_width"] / 2 + 5),
@@ -660,8 +660,8 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
         "z_max" : int(y_bounding_roi["embryo_width"] / 2 + 5)
     }
 
-    rotate_dataset(raw_dataset_xml_path, "z", round(z_bounding_roi["bounding_rect_angle"], 1))
-    rotate_dataset(raw_dataset_xml_path, "y", -1 * round(y_bounding_roi["bounding_rect_angle"], 1))
+    rotate_bigstitcher_dataset(raw_dataset_xml_path, "z", round(z_bounding_roi["bounding_rect_angle"], 1))
+    rotate_bigstitcher_dataset(raw_dataset_xml_path, "y", -1 * round(y_bounding_roi["bounding_rect_angle"], 1))
 
 
     define_bounding_box_for_fusion(raw_dataset_xml_path, embryo_crop_box, "embryo_cropped")
@@ -718,7 +718,7 @@ def process_dataset(input_dataset_dir, results_dir):
         fs.saveAsTiff(os.path.join(results_dir, dataset_name, view_image_name.get_name()))
     fuse_file_pattern = last_timepoint_name
     fuse_file_pattern.time_point = "0001"
-    view_dims = get_image_dims_from_file(os.path.join(results_subdir, fuse_file_pattern.get_name()))
+    view_dims = get_image_dimensions_from_file(os.path.join(results_subdir, fuse_file_pattern.get_name()))
     fuse_file_pattern.direction = "{aaaa}"
     if os.path.exists(os.path.join(results_subdir, "fused.xml")) and use_fused_cache == True:
         print("Skipping fusion for %s, found exiting fused.xml file." % results_subdir)
@@ -766,7 +766,8 @@ def process_dataset(input_dataset_dir, results_dir):
                                                         fused_xml_path=os.path.join(results_subdir, "fused.xml"),
                                                         z_projection=z_projection,
                                                         y_projection=y_projection)
-    IJ.run(zy_cropped_projections, "Canvas Size...", "width=350 height=350 position=Center zero");                                                    
+    IJ.setBackgroundColor(255, 255, 255)
+    IJ.run(zy_cropped_projections, "Canvas Size...", "width=350 height=350 position=Center")                                            
     save_tiff(zy_cropped_projections, os.path.join(cropped_projections_subdir, dataset_name + "_zy_cropped_fused_projections.tiff"))
 
 input_datasets_dir = input_datasets_dir.getAbsolutePath()
