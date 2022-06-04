@@ -16,6 +16,7 @@
 # @ Float (label='Pixel distance X axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_x
 # @ Float (label='Pixel distance Y axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_y
 # @ Float (label='Pixel distance Z axis for calibration in um', value=4.0, style="format:#.00") pixel_distance_z
+# @ Integer (label='Number of deconvolution iterations', value=5) num_deconv_iterations
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 # For detailed documentation go to https://github.com/artgolden/tribolium_processing or read the README.md
@@ -26,6 +27,7 @@ from copy import deepcopy
 from distutils.dir_util import mkpath
 import math
 import os
+from platform import platform
 import re
 import fnmatch
 import json
@@ -61,7 +63,11 @@ from emblcmci import BleachCorrection_MH
 from ij.plugin.filter import Analyzer
 from ij.plugin import RoiEnlarger
 
-# TODO: test 2 channel case
+# TODO: 
+# - test 2 channel case
+# - make option to redo the downsampled images for preview, or better, check if they are the same dimension as planned
+# - Make two separate finished files for B and fusion branches
+# - rotate preview montages for proper head orientation
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -164,6 +170,8 @@ IMAGE_PIXEL_DISTANCE_X = pixel_distance_x
 IMAGE_PIXEL_DISTANCE_Y = pixel_distance_y
 IMAGE_PIXEL_DISTANCE_Z = pixel_distance_z
 
+NUM_DECONV_ITERATIONS = num_deconv_iterations
+
 if Only_fuse_or_deconvolve == "Only Fuse full dataset":
 	ONLY_FUSE_FULL = True
 if Only_fuse_or_deconvolve == "Fuse+Deconvolve":
@@ -171,7 +179,7 @@ if Only_fuse_or_deconvolve == "Fuse+Deconvolve":
 
 CANVAS_SIZE_FOR_EMBRYO_PREVIEW = 1400 / IMAGE_DOWNSAMPLING_FACTOR_XY
 
-DEBUG_USE_FUSED_PREVIEW_CACHE = True
+DEBUG_USE_FUSED_PREVIEW_CACHE = False
 
 class FredericFile:
 	"""
@@ -871,11 +879,29 @@ def get_fusion_tranformation_from_xml_file(xml_path):
 			return matrix
 	return False
 
+def get_bounding_box_coords_from_xml(xml_path, box_name):
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    for box in root.iter('BoundingBoxes'):
+         if box[0].attrib["name"] == box_name:
+             print(box[0].attrib["name"])
+             min = box[0].find("min").text.split(" ")
+             max = box[0].find("max").text.split(" ")
+             box_coords = {
+                 "x_min" : int(min[0]),
+                 "y_min" : int(min[1]),
+                 "z_min" : int(min[2]),
+                 "x_max" : int(max[0]),
+                 "y_max" : int(max[1]),
+                 "z_max" : int(max[2])
+             }
+    return box_coords
+
 def rotate_bigstitcher_dataset(dataset_xml_path, axis_of_rotation, angle):
 	logging.info("Rotating dataset around: %s for angle=%s" % (axis_of_rotation, angle))
 
 	run_string = "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Rigid apply=[Current view transformations (appends to current transforms)] define=[Rotation around axis] same_transformation_for_all_timepoints same_transformation_for_all_angles axis_all_timepoints_channel_0_illumination_0_all_angles=%s-axis rotation_all_timepoints_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, axis_of_rotation, angle)
-	print(run_string)
+	logging.info("Rotating dataset run string: %s " % run_string)
 	IJ.run("Apply Transformations", run_string)
 
 
@@ -888,20 +914,59 @@ def apply_transformation_bigstitcher_dataset(dataset_xml_path, affine_matrix):
 
 	IJ.run("Apply Transformations", "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Affine apply=[Current view transformations (appends to current transforms)] define=Matrix same_transformation_for_all_timepoints same_transformation_for_all_angles all_timepoints_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, short_affine_matrix))
 
+def rotate_bigstitcher_dataset_0_timepoint(dataset_xml_path, axis_of_rotation, angle):
+	timepoint = 0
+	logging.info("Rotating dataset around: %s for angle=%s" % (axis_of_rotation, angle))
+
+	run_string = "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Rigid apply=[Current view transformations (appends to current transforms)] define=[Rotation around axis] same_transformation_for_all_angles axis_timepoint_%s_channel_0_illumination_0_all_angles=%s-axis rotation_timepoint_%s_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, timepoint,  axis_of_rotation, timepoint, angle)
+	logging.info("Rotating dataset run string: %s " % run_string)
+	IJ.run("Apply Transformations", run_string)
+
+def apply_transformation_bigstitcher_dataset_0_timepoint(dataset_xml_path, affine_matrix):
+	timepoint = 0
+	short_affine_matrix = [0 for i in range(12)]
+	for i in range(len(affine_matrix) - 1):
+		for j in range(len(affine_matrix[0])):
+			short_affine_matrix[i * 4 + j] = affine_matrix[i][j]
+	logging.info("Applying transformation with matrix %s" % short_affine_matrix)
+	IJ.run("Apply Transformations", "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Affine apply=[Current view transformations (appends to current transforms)] same_transformation_for_all_angles timepoint_%s_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, timepoint, short_affine_matrix))
+
 def define_bounding_box_for_fusion(dataset_xml_path, box_coords, bounding_box_name):
-	IJ.run("Define Bounding Box for Fusion", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] bounding_box=[Maximal Bounding Box spanning all transformed views] bounding_box_name=%s minimal_x=%s minimal_y=%s minimal_z=%s maximal_x=%s maximal_y=%s maximal_z=%s" % (dataset_xml_path, bounding_box_name, box_coords["x_min"], box_coords["y_min"], box_coords["z_min"], box_coords["x_max"], box_coords["y_max"], box_coords["z_max"]))
+	IJ.run("Define Bounding Box for Fusion", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] bounding_box=[Maximal Bounding Box spanning all transformed views] bounding_box_name=%s minimal_x=%s minimal_y=%s minimal_z=%s maximal_x=%s maximal_y=%s maximal_z=%s" % (dataset_xml_path, bounding_box_name, box_coords["x_min"], box_coords["y_min"], box_coords["z_min"], box_coords["x_max"], box_coords["y_max"], box_coords["z_max"]))
 
 def fuse_dataset_to_tiff(dataset_xml_path, bounding_box_name, fused_xml_path):
 	IJ.run(
 	"Fuse dataset ...",
 	"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, bounding_box_name, fused_xml_path))
 
-def deconvolve_dataset_to_tiff(dataset_xml_path, bounding_box_name, fused_xml_path):
-	pass
+def deconvolve_dataset_to_tiff(dataset_xml_path, 
+							bounding_box_name, 
+							fused_xml_path, 
+							number_deconv_iterations=4, 
+							compute_on="[CPU (Java)]", 
+							cuda_directory=None, 
+							gpu_id = None):
+	#cuda_directory="/home/tema/bin/fiji-linux64/Fiji.app/lib/linux64 select_native_library_for_cudafourierconvolution=libFourierConvolutionCUDALib.so" 
+	if cuda_directory is not None:
+		gpu_id = "gpu_1"
+		cuda_directory = "cuda_directory=" + cuda_directory + " select_native_library_for_cudafourierconvolution=libFourierConvolutionCUDALib.so "
+	IJ.run("Extract PSFs", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] interest_points=beads use_corresponding remove_min_intensity_projections_from_psf psf_size_x=19 psf_size_y=19 psf_size_z=25" % (dataset_xml_path))
+	box_dims = get_bounding_box_coords_from_xml(dataset_xml_path, bounding_box_name)
+	box_string = "[%s (%sx%sx%spx)]" % (bounding_box_name,
+										 abs(box_dims["x_min"] - box_dims["x_max"]),
+										 abs(box_dims["y_min"] - box_dims["y_max"]),
+										 abs(box_dims["z_min"] - box_dims["z_max"]),
+										 )
+	deconv_run_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 input=[Precompute Image] weight=[Precompute Image] initialize_with=[Blurred, fused image (suggested, higher compute effort)] type_of_iteration=[Efficient Bayesian - Optimization I (fast, precise)] fast_sequential_iterations osem_acceleration=1 number_of_iterations=%s use_tikhonov_regularization tikhonov_parameter=0.0060 compute=[in 512x512x512 blocks] compute_on=%s produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] %s %s export_path=%s" % (dataset_xml_path, 				box_string, 
+				number_deconv_iterations, 
+				compute_on, 
+				cuda_directory,
+				gpu_id,
+				fused_xml_path)
+	logging.info("Running deconvolution with following parameters\n %s" % deconv_run_string)
+	IJ.run("Deconvolve", deconv_run_string)
 
 #						B-branch functions
-
-
 
 def create_crop_template(max_time_projection, meta_dir, dataset_metadata_obj, dataset_minimal_crop_box_dims, use_dataset_box_dims):
 	"""Crop max_time_projection, create crop template .roi object, save it in meta_dir.
@@ -1190,6 +1255,8 @@ def find_planes_to_keep(zstack, meta_dir, manual_planes_to_keep):
 
 
 
+
+
 #						Fusion-branch functions
 
 
@@ -1447,7 +1514,7 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 	transformation_embryo_to_center = multiply_matrices(transformation_embryo_to_center, transf_to_raw)
 	transformation_embryo_to_center = inverse_matrix(transformation_embryo_to_center)
 
-	apply_transformation_bigstitcher_dataset(raw_dataset_xml_path, transformation_embryo_to_center)
+	apply_transformation_bigstitcher_dataset_0_timepoint(raw_dataset_xml_path, transformation_embryo_to_center)
 	embryo_crop_box = {
 		"x_min" : -1 * int(z_bounding_roi["embryo_length"] / 2 + 5),
 		"y_min" : -1 * int(z_bounding_roi["embryo_width"] / 2 + 5),
@@ -1459,8 +1526,8 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 
 	rotation_angle_z = round(z_bounding_roi["bounding_rect_angle"], 1)
 	rotation_angle_y = -1 * round(y_bounding_roi["bounding_rect_angle"], 1)
-	rotate_bigstitcher_dataset(raw_dataset_xml_path, "z", rotation_angle_z)
-	rotate_bigstitcher_dataset(raw_dataset_xml_path, "y", rotation_angle_y)
+	rotate_bigstitcher_dataset_0_timepoint(raw_dataset_xml_path, "z", rotation_angle_z)
+	rotate_bigstitcher_dataset_0_timepoint(raw_dataset_xml_path, "y", rotation_angle_y)
 
 
 	define_bounding_box_for_fusion(raw_dataset_xml_path, embryo_crop_box, "embryo_cropped")
@@ -1484,6 +1551,17 @@ def upscale_bounding_box(bounding_box, downsampling_factor_XY, pixel_sizes):
 		"z_max" : bounding_box["z_max"] * z_scaling_factor 
 	}
 	return upscaled_box
+
+def rotate_bounding_box_vertically(box):
+	vertical_box = {
+		"x_min" : box["y_min"],
+		"y_min" : box["x_min"],
+		"z_min" : box["z_min"],
+		"x_max" : box["y_max"],
+		"y_max" : box["x_max"],
+		"z_max" : box["z_max"]
+	}
+	return vertical_box
 
 def upscale_translation_matrix(matrix, downsampling_factor_XY):
 	upscaled_matrix = matrix
@@ -1539,7 +1617,14 @@ def symlink_all_files_from_directions_to_folder(directions_dirs_list, symlinked_
 		for file_path in get_tiffs_in_directory(direction_dir):
 			symlink_path = os.path.join(symlinked_folder, os.path.basename(file_path))
 			if not os.path.exists(symlink_path):
-				os.symlink(file_path, symlink_path)
+				if "Linux" in platform.platform():
+					os.symlink(file_path, symlink_path)
+				elif "Windows" in platform.platform():
+					os.system('cmd /c "mklink %s %s"' % (symlink_path, file_path))
+				else:
+					print("ERROR: Could not determine Operating System type. Exiting.")
+					logging.info("ERROR: Could not determine Operating System type. Exiting.")
+					exit(1)
 
 def get_timepoint_list_from_folder(dir_path):
 	timepoints = []
@@ -2119,6 +2204,8 @@ def fusion_branch_processing(dataset_metadata_obj):
 
 	upscaled_translation_embryo_to_center = upscale_translation_matrix(segmentation_results.transformation_embryo_to_center, IMAGE_DOWNSAMPLING_FACTOR_XY)
 	upscaled_bounding_box = upscale_bounding_box(segmentation_results.embryo_crop_box, IMAGE_DOWNSAMPLING_FACTOR_XY, (IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z))
+	upscaled_vertical_box = rotate_bounding_box_vertically(upscaled_bounding_box)
+	
 	logging.info("Upscaled matrix for embryo translation to center: %s" % upscaled_translation_embryo_to_center)
 	logging.info("Upscaled bounding box for embryo cropping: %s" % upscaled_bounding_box)
 
@@ -2154,7 +2241,13 @@ def fusion_branch_processing(dataset_metadata_obj):
 		apply_transformation_bigstitcher_dataset(dataset_xml_path, upscaled_translation_embryo_to_center)
 		rotate_bigstitcher_dataset(dataset_xml_path, "z", segmentation_results.rotation_angle_z)
 		rotate_bigstitcher_dataset(dataset_xml_path, "y", segmentation_results.rotation_angle_y)
-		define_bounding_box_for_fusion(dataset_xml_path, upscaled_bounding_box, "embryo_cropped")
+		if dataset_metadata_obj.embryo_head_direction == "right":
+			rotate_bigstitcher_dataset(dataset_xml_path, "z", -90)
+		if dataset_metadata_obj.embryo_head_direction == "left":
+			rotate_bigstitcher_dataset(dataset_xml_path, "z", 90)
+		define_bounding_box_for_fusion(dataset_xml_path, upscaled_vertical_box, "embryo_cropped")
+
+
 
 		fusion_output_dir = os.path.join(dataset_metadata_obj.root_dir, FUSED_DIR_NAME, "CH%04d" % ch)
 		if not os.path.exists(fusion_output_dir):
@@ -2162,7 +2255,10 @@ def fusion_branch_processing(dataset_metadata_obj):
 		if ONLY_FUSE_FULL:
 			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"))
 		if FUSE_AND_DECONVOLVE_FULL:
-			deconvolve_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"))
+			deconvolve_dataset_to_tiff(dataset_xml_path, 
+										"embryo_cropped",
+										os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"),
+										NUM_DECONV_ITERATIONS)
 	return True
 
 def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
@@ -2248,6 +2344,8 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 
 		
 		if DO_B_BRANCH:
+			print("Starting B-branch processing. DS%04d" % dataset_metadata_obj.id)
+			logging.info("Starting B-branch processing. DS%04d" % dataset_metadata_obj.id)
 			b_branch_successfull = b_branch_processing(dataset_metadata_obj=dataset_metadata_obj)
 			if not b_branch_successfull:
 				logging.info("ERROR: B-branch failed. Had to skip the dataset DS%04d." % dataset_metadata_obj.id)
@@ -2257,6 +2355,8 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 			logging.info("B-branch processing set to FALSE. Skipping B-branch. DS%04d." % dataset_metadata_obj.id)
 
 		if DO_FUSION_BRANCH:
+			print("Starting Fusion-branch processing. DS%04d" % dataset_metadata_obj.id)
+			logging.info("Starting Fusion-branch processing. DS%04d" % dataset_metadata_obj.id)
 			fusion_branch_successfull = fusion_branch_processing(dataset_metadata_obj=dataset_metadata_obj)
 			if not fusion_branch_successfull:
 				logging.info("ERROR: Fusion-branch failed. Had to skip the dataset DS%04d." % dataset_metadata_obj.id)
@@ -2276,4 +2376,6 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 
 
 if __name__ in ['__builtin__', '__main__']:
+	if DEBUG_USE_FUSED_PREVIEW_CACHE:
+		print("DEBUGGING IS ACTIVE!!!")
 	process_datasets(datasets_dir, metadata_file, dataset_name_prefix)
