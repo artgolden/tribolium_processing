@@ -11,12 +11,18 @@
 # @ Boolean (label='Do histogram matching adjustment?', value=true) do_histogram_matching
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 # @ Boolean (label='Run fusion-branch only up to downsampled preview', value=true) run_fusion_up_to_downsampled_preview
-# @ Integer (label='How many times downsample images for preview/segmentation fusion', value=4) image_downsampling_factor
+# @ Integer (label='How many times downsample images in XY for preview/segmentation fusion', value=4) image_downsampling_factor
+# @ String (choices={"Only Fuse full dataset", "Fuse+Deconvolve"}, style="radioButtonHorizontal", value="Fuse+Deconvolve") Only_fuse_or_deconvolve
+# @ Float (label='Pixel distance X axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_x
+# @ Float (label='Pixel distance Y axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_y
+# @ Float (label='Pixel distance Z axis for calibration in um', value=4.0, style="format:#.00") pixel_distance_z
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 # For detailed documentation go to https://github.com/artgolden/tribolium_processing or read the README.md
 # Last manual update of this line 2022.5.18 :)
 
+from collections import namedtuple
+from copy import deepcopy
 from distutils.dir_util import mkpath
 import math
 import os
@@ -55,12 +61,7 @@ from emblcmci import BleachCorrection_MH
 from ij.plugin.filter import Analyzer
 from ij.plugin import RoiEnlarger
 
-#TODO:
-#	What to do if embryo is off-center so much that start_plane = int(round(middle_y - 75))
-# 	gives negative values? Make a better solution than just shifting the 150 plane crop.
-
-
-
+# TODO: test 2 channel case
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -127,6 +128,8 @@ RAW_IMAGES_DIR_NAME = "(P0)-ZStacks-Raw"
 RAW_CROPPED_DIR_NAME = "(B2)-ZStacks"
 CONTRAST_DIR_NAME = "(B4)-TStacks-ZN"
 MONTAGE_DIR_NAME = "(B5)-TStacks-ZN-Montage"
+FUSED_DIR_NAME = "(FUSION)-Fused-cropped-dataset"
+LINK_DIR_FOR_FUSION = "(FUSION)-linked-dataset"
 
 DATASET_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
 DATASET_FINISHED_FILE_NAME = "B_BRANCH_FINISHED"
@@ -153,9 +156,23 @@ COMPRESS_ON_SAVE = compress_on_save
 DO_B_BRANCH = do_b_branch
 DO_FUSION_BRANCH = do_fusion_branch
 RUN_FUSION_UP_TO_DOWNSAMPLED_PREVIEW = run_fusion_up_to_downsampled_preview
-IMAGE_DOWNSAMPLING_FACTOR = image_downsampling_factor
+IMAGE_DOWNSAMPLING_FACTOR_XY = image_downsampling_factor
+ONLY_FUSE_FULL = False
+FUSE_AND_DECONVOLVE_FULL = False
 
-CANVAS_SIZE_FOR_EMBRYO_PREVIEW = 1400 / IMAGE_DOWNSAMPLING_FACTOR
+IMAGE_PIXEL_DISTANCE_X = pixel_distance_x
+IMAGE_PIXEL_DISTANCE_Y = pixel_distance_y
+IMAGE_PIXEL_DISTANCE_Z = pixel_distance_z
+
+if Only_fuse_or_deconvolve == "Only Fuse full dataset":
+	ONLY_FUSE_FULL = True
+if Only_fuse_or_deconvolve == "Fuse+Deconvolve":
+	FUSE_AND_DECONVOLVE_FULL = True
+
+CANVAS_SIZE_FOR_EMBRYO_PREVIEW = 1400 / IMAGE_DOWNSAMPLING_FACTOR_XY
+
+DEBUG_USE_FUSED_PREVIEW_CACHE = True
+
 class FredericFile:
 	"""
 	File naming for light-sheet image files. Frederic Strobl™ 
@@ -253,11 +270,11 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 							use_manual_b_branch_bounding_box=metadata_dict["use_manual_bounding_box"],
 							planes_to_keep_per_direction_b_branch=planes_to_keep_per_direction_b_branch)
 		
+SegmentationResults = namedtuple("SegmentationResults", ["transformation_embryo_to_center", "rotation_angle_z", "rotation_angle_y", "embryo_crop_box"])
 
 
-##################################################################
 #						General functions
-##################################################################
+
 
 
 ###### File managing
@@ -854,77 +871,36 @@ def get_fusion_tranformation_from_xml_file(xml_path):
 			return matrix
 	return False
 
-def rotate_bigstitcher_dataset(dataset_xml_path, axis_of_rotation, angle, timepoint=0):
+def rotate_bigstitcher_dataset(dataset_xml_path, axis_of_rotation, angle):
 	logging.info("Rotating dataset around: %s for angle=%s" % (axis_of_rotation, angle))
-	IJ.run("Apply Transformations", "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Rigid apply=[Current view transformations (appends to current transforms)] define=[Rotation around axis] same_transformation_for_all_angles axis_timepoint_%s_channel_0_illumination_0_all_angles=%s-axis rotation_timepoint_%s_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, timepoint,  axis_of_rotation, timepoint, angle))
 
-def apply_transformation_bigstitcher_dataset(dataset_xml_path, affine_matrix, timepoint=0):
+	run_string = "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Rigid apply=[Current view transformations (appends to current transforms)] define=[Rotation around axis] same_transformation_for_all_timepoints same_transformation_for_all_angles axis_all_timepoints_channel_0_illumination_0_all_angles=%s-axis rotation_all_timepoints_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, axis_of_rotation, angle)
+	print(run_string)
+	IJ.run("Apply Transformations", run_string)
+
+
+def apply_transformation_bigstitcher_dataset(dataset_xml_path, affine_matrix):
 	short_affine_matrix = [0 for i in range(12)]
 	for i in range(len(affine_matrix) - 1):
 		for j in range(len(affine_matrix[0])):
 			short_affine_matrix[i * 4 + j] = affine_matrix[i][j]
 	logging.info("Applying transformation with matrix %s" % short_affine_matrix)
 
-	IJ.run("Apply Transformations", "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Affine apply=[Current view transformations (appends to current transforms)] same_transformation_for_all_angles timepoint_%s_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, timepoint, short_affine_matrix))
+	IJ.run("Apply Transformations", "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Affine apply=[Current view transformations (appends to current transforms)] define=Matrix same_transformation_for_all_timepoints same_transformation_for_all_angles all_timepoints_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, short_affine_matrix))
 
-def define_bounding_box_for_fusion(dataset_xml_path, box_coords, bounding_box_name, timepoint=0):
-	IJ.run("Define Bounding Box for Fusion", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_timepoint=[Timepoint %s] bounding_box=[Maximal Bounding Box spanning all transformed views] bounding_box_name=%s minimal_x=%s minimal_y=%s minimal_z=%s maximal_x=%s maximal_y=%s maximal_z=%s" % (dataset_xml_path, timepoint, bounding_box_name, box_coords["x_min"], box_coords["y_min"], box_coords["z_min"], box_coords["x_max"], box_coords["y_max"], box_coords["z_max"]))
-
-def fuse_dataset_to_display(dataset_xml_path, bounding_box_name):
-	IJ.run("Fuse dataset ...", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each timepoint & channel] fused_image=[Display using ImageJ]" % (dataset_xml_path, bounding_box_name))
+def define_bounding_box_for_fusion(dataset_xml_path, box_coords, bounding_box_name):
+	IJ.run("Define Bounding Box for Fusion", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] bounding_box=[Maximal Bounding Box spanning all transformed views] bounding_box_name=%s minimal_x=%s minimal_y=%s minimal_z=%s maximal_x=%s maximal_y=%s maximal_z=%s" % (dataset_xml_path, bounding_box_name, box_coords["x_min"], box_coords["y_min"], box_coords["z_min"], box_coords["x_max"], box_coords["y_max"], box_coords["z_max"]))
 
 def fuse_dataset_to_tiff(dataset_xml_path, bounding_box_name, fused_xml_path):
 	IJ.run(
 	"Fuse dataset ...",
 	"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, bounding_box_name, fused_xml_path))
 
+def deconvolve_dataset_to_tiff(dataset_xml_path, bounding_box_name, fused_xml_path):
+	pass
 
-def create_and_fuse_dataset(dataset_dir, file_pattern, angles_from_to, view_stack_dims):
-	dataset_xml_name = "dataset.xml"
-	dataset_xml = os.path.join(dataset_dir, "dataset.xml")
-	sigma = 2.0
-	threshold = 0.01
-	max_detections_per_view = 1000
-
-	redundancy = 1
-	significance = 10
-	allowed_error_for_ransac = 2
-	number_of_ransac_iterations = "Normal"
-
-	reference_timepoint = 1
-
-	output_fused_path = os.path.join(dataset_dir, "fused.xml")
-
-
-
-#  
-	IJ.run(
-		"Define dataset ...",
-		"define_dataset=[Manual Loader (TIFF only, ImageJ Opener)] project_filename=%s multiple_timepoints=[NO (one time-point)] multiple_channels=[NO (one channel)] _____multiple_illumination_directions=[NO (one illumination direction)] multiple_angles=[YES (one file per angle)] multiple_tiles=[NO (one tile)] image_file_directory=%s image_file_pattern=%s acquisition_angles_=%s-%s calibration_type=[Same voxel-size for all views] calibration_definition=[User define voxel-size(s)] imglib2_data_container=[ArrayImg (faster)] pixel_distance_x=1.00000 pixel_distance_y=1.00000 pixel_distance_z=1.00000 pixel_unit=um" % (dataset_xml_name, dataset_dir, file_pattern, angles_from_to[0], angles_from_to[1]))
-
-	IJ.run(
-		"Detect Interest Points for Pairwise Registration", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads limit_amount_of_detections subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima maximum_number=%s type_of_detections_to_use=Brightest compute_on=[CPU (Java)]"
-		% (dataset_xml, sigma, threshold, max_detections_per_view))
-
-	IJ.run(
-		"Register Dataset based on Interest Points",
-		"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s"
-		% (dataset_xml, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations))
-
-	IJ.run(
-		"Define Bounding Box for Fusion",
-		"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=[Maximal Bounding Box spanning all transformed views] bounding_box=[Maximal Bounding Box spanning all transformed views] bounding_box_name=max_box minimal_x=0 minimal_y=0 minimal_z=0 maximal_x=%s maximal_y=%s maximal_z=%s"
-		% (dataset_xml, view_stack_dims[0], view_stack_dims[1], view_stack_dims[2]))
-
-	logging.info("saving fused dataset to: %s" % output_fused_path)
-	IJ.run(
-		"Fuse dataset ...",
-		"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=max_box downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml, output_fused_path))
-
-
-##############################################################################
 #						B-branch functions
-##############################################################################
+
 
 
 def create_crop_template(max_time_projection, meta_dir, dataset_metadata_obj, dataset_minimal_crop_box_dims, use_dataset_box_dims):
@@ -966,16 +942,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset_metadata_obj, da
 		# Using IJ.run() for erosion and dilation has some persistent state after run
 		# that produces inconsistent behaviour and bugs
 		# This is why I am using ByteProcessor methods directly
-		bt = mask.getProcessor().convertToByteProcessor()
-		for i in range(40):
-			bt.erode(2, 0)
-		for i in range(40):
-			bt.dilate(2, 0)
-		for i in range(40):
-			bt.erode(3, 0)
-		for i in range(40):
-			bt.dilate(3, 0)
-		mask.setProcessor(bt)
+		smoothen_embryo_mask(mask, 40)
 		IJ.run("Clear Results")
 		table = ResultsTable()
 		# Initialise without display (boolean value is ignored)
@@ -1222,9 +1189,9 @@ def find_planes_to_keep(zstack, meta_dir, manual_planes_to_keep):
 	return (start_plane, end_plane)
 
 
-##############################################################################
+
 #						Fusion-branch functions
-##############################################################################
+
 
 
 def get_embryo_mask(image_16bit, threshold_type):
@@ -1385,21 +1352,8 @@ def get_embryo_bounding_rectangle_and_params(max_projection, show_mask=False, fi
 	if fill_zeros:
 		fill_zero_pixels_with_median_intensity(max_projection)
 
-	# image_hist = max_projection.getProcessor().getHistogram()
-	# mean_intensity = get_mean_intensity(max_projection)
-	# median_intensity = get_median_intensity(max_projection)
-
 	mask = get_embryo_mask(image_16bit=max_projection, threshold_type="triangle")
-	# threshold_choosing_intensity =  int(1.4 * median_intensity)
-	# if mean_intensity < threshold_choosing_intensity:
-	#	 print("Image average intesity < %s using triangle threshold." % threshold_choosing_intensity)
-	#	 mask = get_embryo_mask(image_16bit=max_projection, threshold_type="triangle")
-	# else:
-	#	 print("Image average intesity > %s using triangle threshold." % threshold_choosing_intensity)
-	#	 mask = get_embryo_mask(image_16bit=max_projection, threshold_type="triangle")   
-	# else:
-	#	 print("Image average intesity > %s using huang2 threshold." % threshold_choosing_intensity)
-	#	 mask = get_embryo_mask(image_16bit=max_projection, threshold_type="huang2")   
+
 
 	if show_mask:
 		mask.show() 
@@ -1411,6 +1365,51 @@ def get_embryo_bounding_rectangle_and_params(max_projection, show_mask=False, fi
 	bounding_roi_stuff = bounding_roi_and_params_from_embryo_mask(mask=mask, spacing_around_embryo=8)
 	bounding_roi_stuff["mask"] = mask
 	return bounding_roi_stuff
+
+def create_and_fuse_preview_dataset(dataset_dir, file_pattern, angles_from_to, view_stack_dims):
+	dataset_xml_name = "dataset.xml"
+	dataset_xml = os.path.join(dataset_dir, "dataset.xml")
+	sigma = 2.0
+	threshold = 0.01
+	max_detections_per_view = 1000
+
+	redundancy = 1
+	significance = 10
+	allowed_error_for_ransac = 2
+	number_of_ransac_iterations = "Normal"
+
+	reference_timepoint = 1
+
+	output_fused_path = os.path.join(dataset_dir, "fused.xml")
+
+
+
+#  
+	IJ.run(
+		"Define dataset ...",
+		"define_dataset=[Manual Loader (TIFF only, ImageJ Opener)] project_filename=%s multiple_timepoints=[NO (one time-point)] multiple_channels=[NO (one channel)] _____multiple_illumination_directions=[NO (one illumination direction)] multiple_angles=[YES (one file per angle)] multiple_tiles=[NO (one tile)] image_file_directory=%s image_file_pattern=%s acquisition_angles_=%s-%s calibration_type=[Same voxel-size for all views] calibration_definition=[User define voxel-size(s)] imglib2_data_container=[ArrayImg (faster)] pixel_distance_x=1.00000 pixel_distance_y=1.00000 pixel_distance_z=1.00000 pixel_unit=um" % (dataset_xml_name, dataset_dir, file_pattern, angles_from_to[0], angles_from_to[1]))
+
+	IJ.run(
+		"Detect Interest Points for Pairwise Registration", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads limit_amount_of_detections subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima maximum_number=%s type_of_detections_to_use=Brightest compute_on=[CPU (Java)]"
+		% (dataset_xml, sigma, threshold, max_detections_per_view))
+
+	IJ.run(
+		"Register Dataset based on Interest Points",
+		"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s"
+		% (dataset_xml, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations))
+
+	box_coords = {
+		"x_min" : 0,
+		"y_min" : 0,
+		"z_min" : 0,
+		"x_max" : view_stack_dims[0],
+		"y_max" : view_stack_dims[1],
+		"z_max" : view_stack_dims[2],
+	}
+	define_bounding_box_for_fusion(dataset_xml, box_coords, "max_box")
+
+	logging.info("saving fused dataset to: %s" % output_fused_path)
+	fuse_dataset_to_tiff(dataset_xml, "max_box", output_fused_path)
 
 def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, fused_xml_path, z_projection, y_projection):
 	dataset_dir = os.path.dirname(raw_dataset_xml_path)
@@ -1458,8 +1457,10 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 		"z_max" : int(y_bounding_roi["embryo_width"] / 2 + 5)
 	}
 
-	rotate_bigstitcher_dataset(raw_dataset_xml_path, "z", round(z_bounding_roi["bounding_rect_angle"], 1))
-	rotate_bigstitcher_dataset(raw_dataset_xml_path, "y", -1 * round(y_bounding_roi["bounding_rect_angle"], 1))
+	rotation_angle_z = round(z_bounding_roi["bounding_rect_angle"], 1)
+	rotation_angle_y = -1 * round(y_bounding_roi["bounding_rect_angle"], 1)
+	rotate_bigstitcher_dataset(raw_dataset_xml_path, "z", rotation_angle_z)
+	rotate_bigstitcher_dataset(raw_dataset_xml_path, "y", rotation_angle_y)
 
 
 	define_bounding_box_for_fusion(raw_dataset_xml_path, embryo_crop_box, "embryo_cropped")
@@ -1468,12 +1469,96 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 	fuse_dataset_to_tiff(raw_dataset_xml_path, "embryo_cropped", cropped_fused_path)
 	zy_cropped_projections = Z_Y_projection_montage_from_image_stack(IJ.openImage(cropped_fusion_stack_path))
 
-	return zy_cropped_projections
+	segmentation_results = SegmentationResults(transformation_embryo_to_center, rotation_angle_z, rotation_angle_y, embryo_crop_box)
+
+	return (zy_cropped_projections, segmentation_results)
+
+def upscale_bounding_box(bounding_box, downsampling_factor_XY, pixel_sizes):
+	z_scaling_factor = pixel_sizes[2] / pixel_sizes[0]
+	upscaled_box = {
+		"x_min" : bounding_box["x_min"] * downsampling_factor_XY,
+		"y_min" : bounding_box["y_min"] * downsampling_factor_XY,
+		"z_min" : bounding_box["z_min"] * z_scaling_factor,
+		"x_max" : bounding_box["x_max"] * downsampling_factor_XY,
+		"y_max" : bounding_box["y_max"] * downsampling_factor_XY,
+		"z_max" : bounding_box["z_max"] * z_scaling_factor 
+	}
+	return upscaled_box
+
+def upscale_translation_matrix(matrix, downsampling_factor_XY):
+	upscaled_matrix = matrix
+	upscaled_matrix[0][3] = upscaled_matrix[0][3] * downsampling_factor_XY
+	upscaled_matrix[1][3] = upscaled_matrix[1][3] * downsampling_factor_XY
+	upscaled_matrix[2][3] = upscaled_matrix[2][3] * downsampling_factor_XY
+	return upscaled_matrix
+
+def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, timepoints_list, angles_from_to, calibration_pixel_distances):
+	dataset_xml_name = "%s.xml" % dataset_name
+	dataset_xml = os.path.join(dataset_dir, "%s.xml" % dataset_name)
+	sigma = 2.0
+	threshold = 0.01
+	max_detections_per_view = 1000
+
+	redundancy = 1
+	significance = 10
+	allowed_error_for_ransac = 2
+	number_of_ransac_iterations = "Normal"
+
+	reference_timepoint = 1
 
 
-##############################################################################
+	IJ.run(
+		"Define dataset ...",
+		"define_dataset=[Manual Loader (TIFF only, ImageJ Opener)] project_filename=%s multiple_timepoints=[YES (one file per time-point)] multiple_channels=[NO (one channel)] _____multiple_illumination_directions=[NO (one illumination direction)] multiple_angles=[YES (one file per angle)] multiple_tiles=[NO (one tile)] image_file_directory=%s image_file_pattern=%s timepoints_=%s acquisition_angles_=%s-%s calibration_type=[Same voxel-size for all views] calibration_definition=[User define voxel-size(s)] imglib2_data_container=[ArrayImg (faster)] pixel_distance_x=%s pixel_distance_y=%s pixel_distance_z=%s pixel_unit=um" % (dataset_xml_name, 
+																					dataset_dir, 
+																					file_pattern, 
+																					timepoints_list, 
+																					angles_from_to[0], 
+																					angles_from_to[1],
+																					calibration_pixel_distances[0],
+																					calibration_pixel_distances[1],
+																					calibration_pixel_distances[2]
+																					))
+
+	# use_same_min parameter is very important. If you do not use same min max intensity, point detection will not work for low intensity datasets
+	IJ.run(
+		"Detect Interest Points for Pairwise Registration", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads limit_amount_of_detections subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima maximum_number=%s type_of_detections_to_use=Brightest compute_on=[CPU (Java)]"
+		% (dataset_xml, sigma, threshold, max_detections_per_view))
+
+	IJ.run(
+		"Register Dataset based on Interest Points",
+		"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s"
+		% (dataset_xml, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations))
+
+	IJ.run(
+		"Register Dataset based on Interest Points",
+		"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Match against one reference timepoint (no global optimization)] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads reference=%s consider_each_timepoint_as_rigid_unit transformation=Translation regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=1 significance=10 allowed_error_for_ransac=2 number_of_ransac_iterations=Normal interestpoint_grouping=[Group interest points (simply combine all in one virtual view)] interest=5" % (dataset_xml, reference_timepoint))
+
+def symlink_all_files_from_directions_to_folder(directions_dirs_list, symlinked_folder):
+	for direction_dir in directions_dirs_list:
+		for file_path in get_tiffs_in_directory(direction_dir):
+			symlink_path = os.path.join(symlinked_folder, os.path.basename(file_path))
+			if not os.path.exists(symlink_path):
+				os.symlink(file_path, symlink_path)
+
+def get_timepoint_list_from_folder(dir_path):
+	timepoints = []
+	for file in get_tiffs_in_directory(dir_path):
+		filename = FredericFile(os.path.basename(file))
+		try:
+			timepoints.append(int(filename.time_point))
+		except:
+			print("ERROR: could not extract timepoint from file name. %s" % file)
+			logging.info("ERROR: could not extract timepoint from file name. %s" % file)
+			return False
+	# removing duplicates and sorting
+	timepoints = list(dict.fromkeys(timepoints))
+	timepoints.sort()  
+	return timepoints 
+
+
 #						Pipeline helper functions
-##############################################################################
+
 
 def get_directions_dirs_for_folder(input_dir, ndirections):
 	direction_dirs = []
@@ -1575,9 +1660,9 @@ def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 	logging.info("Checked metadata file. No errors found.")
 
 
-########################
-#	Pipeline main process functions
-########################
+
+#					Pipeline main process functions
+
 
 def move_files(raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix):
 	"""Splits the embryo images by direction and puts in separate channel/direction folders. 
@@ -1956,18 +2041,6 @@ def b_branch_processing(dataset_metadata_obj):
 	return True
 
 def fusion_branch_processing(dataset_metadata_obj):
-	# + Downsample all directions for channel 1 for timepoint 1 in a downsampled_1_timepoint folder 
-	#   (make sure not to downsample if all files are present, cache invalidate last downsampled file)
-	# + Define, Fuse 1 timepoint to downsampled_fusion_for_segmentation folder
-	# + do ZY Max projection from downsampled fusion
-	# - segment_embryo_and_fuse_again_cropping_around_embryo, save cropped fusion to ./METADATA_DIR/Channel1/cropped_fused_1_timepoint folder
-	#   (get downsampled data transformations and bounding box)
-	# - save fused ZY Max projections to a ZY_max_projectinons_for_fusion_asessment folder in the datasets root folder 
-	# 	(expand canvas to fit, put dataset in the name)
-	# - Make an option to run the pipeline only up to this point
-	# - upscale embryo centering+alignment transformation and the boundning box
-	# - Do fusion+deconvolution of all images in the dataset
-	# - expose fusion/deconvolution parameters. Make an option to do only fusion
 	raw_img_ch_1_dir = os.path.join(dataset_metadata_obj.raw_images_dir_path, "CH0001")
 	raw_direction_dirs = get_directions_dirs_for_folder(raw_img_ch_1_dir, dataset_metadata_obj.number_of_directions)
 	example_raw_filename = get_any_tiff_name_from_dir(raw_direction_dirs[0])
@@ -1983,7 +2056,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 	view_image_filename = example_raw_filename
 	view_image_filename.time_point = "%04d" % 1
 
-	# Downsample 1 timepoint to a new folder
+	# Downsample timepoint 1 to a new folder
 	logging.info("Downsampling images for fusion+segmentation")
 	for direction, direction_dir in zip(range(1, dataset_metadata_obj.number_of_directions + 1), raw_direction_dirs):
 		view_image_filename.direction = "%04d" % (direction + 1)
@@ -1999,16 +2072,17 @@ def fusion_branch_processing(dataset_metadata_obj):
 
 		full_image_path = os.path.join(direction_dir, view_image_filename.get_name())
 		full_image = IJ.openImage(full_image_path)
-		downsampled_image = downsample_image_stack(full_image, full_image.getWidth() / IMAGE_DOWNSAMPLING_FACTOR)
+		downsampled_image = downsample_image_stack(full_image, full_image.getWidth() / IMAGE_DOWNSAMPLING_FACTOR_XY)
 		fs = FileSaver(downsampled_image)
 		fs.saveAsTiff(downsampled_image_path)
 
-	# Fuse 1 downsampled timepoint
+	# Fuse downsampled timepoint 1
 	view_dims = get_image_dimensions_from_file(os.path.join(downsampled_dir, view_image_filename.get_name()))
 	fuse_file_pattern = view_image_filename
 	fuse_file_pattern.direction = "{aaaa}"
 	logging.info("DS%04d Fusing downsampled 1 timepoint" % dataset_metadata_obj.id)
-	create_and_fuse_dataset(downsampled_dir, fuse_file_pattern.get_name(), (1, dataset_metadata_obj.number_of_directions), view_dims)
+	if not DEBUG_USE_FUSED_PREVIEW_CACHE:
+		create_and_fuse_preview_dataset(downsampled_dir, fuse_file_pattern.get_name(), (1, dataset_metadata_obj.number_of_directions), view_dims)
 
 	fused_file_path = os.path.join(downsampled_dir, "fused_tp_0_ch_0.tif")
 
@@ -2016,11 +2090,13 @@ def fusion_branch_processing(dataset_metadata_obj):
 	z_projection = project_image(fused_stack, "Z", "Max")
 	y_projection = project_image(fused_stack, "Y", "Max")
 
-	zy_cropped_projections = segment_embryo_and_fuse_again_cropping_around_embryo(
+	zy_cropped_projections, segmentation_results = segment_embryo_and_fuse_again_cropping_around_embryo(
 														raw_dataset_xml_path=os.path.join(downsampled_dir, "dataset.xml"),
 														fused_xml_path=os.path.join(downsampled_dir, "fused.xml"),
 														z_projection=z_projection,
 														y_projection=y_projection)
+	
+	# Save ZY cropped projection montages
 	if zy_cropped_projections == False:
 		print("segment_embryo_and_fuse_again_cropping_around_embryo Failed. Exiting Fusion-branch.")
 		logging.info("segment_embryo_and_fuse_again_cropping_around_embryo Failed. Exiting Fusion-branch.")
@@ -2039,6 +2115,54 @@ def fusion_branch_processing(dataset_metadata_obj):
 		logging.info("Fusion-branch was specified to run only until preview. Continuing.")
 		return True
 
+	###### Fusion and deconvolution full dataset
+
+	upscaled_translation_embryo_to_center = upscale_translation_matrix(segmentation_results.transformation_embryo_to_center, IMAGE_DOWNSAMPLING_FACTOR_XY)
+	upscaled_bounding_box = upscale_bounding_box(segmentation_results.embryo_crop_box, IMAGE_DOWNSAMPLING_FACTOR_XY, (IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z))
+	logging.info("Upscaled matrix for embryo translation to center: %s" % upscaled_translation_embryo_to_center)
+	logging.info("Upscaled bounding box for embryo cropping: %s" % upscaled_bounding_box)
+
+	for ch in range(1, dataset_metadata_obj.number_of_channels + 1):
+		raw_direction_dirs = get_directions_dirs_for_folder(os.path.join(dataset_metadata_obj.raw_images_dir_path, "CH%04d" % ch), 
+															dataset_metadata_obj.number_of_directions)
+		fusion_setup_folder = os.path.join(dataset_metadata_obj.root_dir, LINK_DIR_FOR_FUSION, "CH%04d" % ch)
+		if not os.path.exists(fusion_setup_folder):
+			mkpath(fusion_setup_folder)
+		logging.info("Creating symlinked folder with all directions for fusion.")
+		symlink_all_files_from_directions_to_folder(raw_direction_dirs, fusion_setup_folder)
+
+		pre_fusion_dataset_basename = view_image_filename
+		pre_fusion_dataset_basename.direction = "all_"
+		pre_fusion_dataset_basename.time_point = "all_"
+		pre_fusion_dataset_basename.channel = "%04d" % ch
+		fusion_dataset_basename = deepcopy(pre_fusion_dataset_basename)
+		fusion_dataset_basename.direction = "fuse"
+		fusion_dataset_basename = os.path.splitext(fusion_dataset_basename.get_name())[0]
+		full_dataset_file_pattern = deepcopy(pre_fusion_dataset_basename)
+		pre_fusion_dataset_basename = os.path.splitext(pre_fusion_dataset_basename.get_name())[0]
+		full_dataset_file_pattern.direction = "{aaaa}"
+		full_dataset_file_pattern.time_point = "{tttt}"
+
+
+		create_and_register_full_dataset(fusion_setup_folder, 
+										pre_fusion_dataset_basename, 
+										full_dataset_file_pattern.get_name(), 
+										get_timepoint_list_from_folder(fusion_setup_folder),
+										(1, dataset_metadata_obj.number_of_directions),
+										(IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z))
+		dataset_xml_path = os.path.join(fusion_setup_folder, pre_fusion_dataset_basename + ".xml")
+		apply_transformation_bigstitcher_dataset(dataset_xml_path, upscaled_translation_embryo_to_center)
+		rotate_bigstitcher_dataset(dataset_xml_path, "z", segmentation_results.rotation_angle_z)
+		rotate_bigstitcher_dataset(dataset_xml_path, "y", segmentation_results.rotation_angle_y)
+		define_bounding_box_for_fusion(dataset_xml_path, upscaled_bounding_box, "embryo_cropped")
+
+		fusion_output_dir = os.path.join(dataset_metadata_obj.root_dir, FUSED_DIR_NAME, "CH%04d" % ch)
+		if not os.path.exists(fusion_output_dir):
+			mkpath(fusion_output_dir)
+		if ONLY_FUSE_FULL:
+			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"))
+		if FUSE_AND_DECONVOLVE_FULL:
+			deconvolve_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"))
 	return True
 
 def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
