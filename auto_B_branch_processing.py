@@ -11,12 +11,13 @@
 # @ Boolean (label='Do histogram matching adjustment?', value=true) do_histogram_matching
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 # @ Boolean (label='Run fusion-branch only up to downsampled preview', value=true) run_fusion_up_to_downsampled_preview
-# @ Integer (label='How many times downsample images in XY for preview/segmentation fusion', value=4) image_downsampling_factor
+# @ Boolean (label='Run fusion-branch only up to start of deconvolution', value=False) run_fusion_up_to_start_of_deconvolution
 # @ String (choices={"Only Fuse full dataset", "Fuse+Deconvolve"}, style="radioButtonHorizontal", value="Fuse+Deconvolve") Only_fuse_or_deconvolve
 # @ Float (label='Pixel distance X axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_x
 # @ Float (label='Pixel distance Y axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_y
 # @ Float (label='Pixel distance Z axis for calibration in um', value=4.0, style="format:#.00") pixel_distance_z
 # @ Integer (label='Number of deconvolution iterations', value=5) num_deconv_iterations
+#  Integer (label='How many times downsample images in XY for preview/segmentation fusion', value=4) image_downsampling_factor
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 # For detailed documentation go to https://github.com/artgolden/tribolium_processing or read the README.md
@@ -27,7 +28,7 @@ from copy import deepcopy
 from distutils.dir_util import mkpath
 import math
 import os
-from platform import platform
+import platform
 import re
 import fnmatch
 import json
@@ -64,10 +65,15 @@ from ij.plugin.filter import Analyzer
 from ij.plugin import RoiEnlarger
 
 # TODO: 
+# - Write current limitations and implicid assumptions in the documentation
 # - test 2 channel case
 # - make option to redo the downsampled images for preview, or better, check if they are the same dimension as planned
 # - Make two separate finished files for B and fusion branches
-# - rotate preview montages for proper head orientation
+# - save the PSF from beads from 1 timepoint to file and use it for all timepoints
+# - timepoints selection for fusion as a parameter
+# - make an option to load the PSF from a file
+# - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
+# this is very slow. Probably need to switch to some other way of manually defining min/max.
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -162,7 +168,8 @@ COMPRESS_ON_SAVE = compress_on_save
 DO_B_BRANCH = do_b_branch
 DO_FUSION_BRANCH = do_fusion_branch
 RUN_FUSION_UP_TO_DOWNSAMPLED_PREVIEW = run_fusion_up_to_downsampled_preview
-IMAGE_DOWNSAMPLING_FACTOR_XY = image_downsampling_factor
+RUN_FUSION_UP_TO_START_OF_DECONV = run_fusion_up_to_start_of_deconvolution
+IMAGE_DOWNSAMPLING_FACTOR_XY = image_downsampling_factor = 4
 ONLY_FUSE_FULL = False
 FUSE_AND_DECONVOLVE_FULL = False
 
@@ -953,9 +960,9 @@ def deconvolve_dataset_to_tiff(dataset_xml_path,
 	IJ.run("Extract PSFs", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] interest_points=beads use_corresponding remove_min_intensity_projections_from_psf psf_size_x=19 psf_size_y=19 psf_size_z=25" % (dataset_xml_path))
 	box_dims = get_bounding_box_coords_from_xml(dataset_xml_path, bounding_box_name)
 	box_string = "[%s (%sx%sx%spx)]" % (bounding_box_name,
-										 abs(box_dims["x_min"] - box_dims["x_max"]),
-										 abs(box_dims["y_min"] - box_dims["y_max"]),
-										 abs(box_dims["z_min"] - box_dims["z_max"]),
+										 abs(box_dims["x_min"] - box_dims["x_max"]) + 1,
+										 abs(box_dims["y_min"] - box_dims["y_max"]) + 1,
+										 abs(box_dims["z_min"] - box_dims["z_max"]) + 1,
 										 )
 	deconv_run_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 input=[Precompute Image] weight=[Precompute Image] initialize_with=[Blurred, fused image (suggested, higher compute effort)] type_of_iteration=[Efficient Bayesian - Optimization I (fast, precise)] fast_sequential_iterations osem_acceleration=1 number_of_iterations=%s use_tikhonov_regularization tikhonov_parameter=0.0060 compute=[in 512x512x512 blocks] compute_on=%s produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] %s %s export_path=%s" % (dataset_xml_path, 				box_string, 
 				number_deconv_iterations, 
@@ -1415,7 +1422,7 @@ def bounding_roi_and_params_from_embryo_mask(mask, spacing_around_embryo=10):
 	}
 	return bounding_roi
 
-def get_embryo_bounding_rectangle_and_params(max_projection, show_mask=False, fill_zeros=True):
+def get_embryo_bounding_rectangle_and_params(max_projection, show_mask=False, fill_zeros=False):
 	if fill_zeros:
 		fill_zero_pixels_with_median_intensity(max_projection)
 
@@ -1466,12 +1473,12 @@ def create_and_fuse_preview_dataset(dataset_dir, file_pattern, angles_from_to, v
 		% (dataset_xml, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations))
 
 	box_coords = {
-		"x_min" : 0,
-		"y_min" : 0,
-		"z_min" : 0,
-		"x_max" : view_stack_dims[0],
-		"y_max" : view_stack_dims[1],
-		"z_max" : view_stack_dims[2],
+		"x_min" : 0 + 1,
+		"y_min" : 0 + 1,
+		"z_min" : 0 + 1,
+		"x_max" : view_stack_dims[0] - 1,
+		"y_max" : view_stack_dims[1] - 1,
+		"z_max" : view_stack_dims[2] - 2,
 	}
 	define_bounding_box_for_fusion(dataset_xml, box_coords, "max_box")
 
@@ -1585,9 +1592,7 @@ def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, ti
 	reference_timepoint = 1
 
 
-	IJ.run(
-		"Define dataset ...",
-		"define_dataset=[Manual Loader (TIFF only, ImageJ Opener)] project_filename=%s multiple_timepoints=[YES (one file per time-point)] multiple_channels=[NO (one channel)] _____multiple_illumination_directions=[NO (one illumination direction)] multiple_angles=[YES (one file per angle)] multiple_tiles=[NO (one tile)] image_file_directory=%s image_file_pattern=%s timepoints_=%s acquisition_angles_=%s-%s calibration_type=[Same voxel-size for all views] calibration_definition=[User define voxel-size(s)] imglib2_data_container=[ArrayImg (faster)] pixel_distance_x=%s pixel_distance_y=%s pixel_distance_z=%s pixel_unit=um" % (dataset_xml_name, 
+	define_string = "define_dataset=[Manual Loader (TIFF only, ImageJ Opener)] project_filename=%s multiple_timepoints=[YES (one file per time-point)] multiple_channels=[NO (one channel)] _____multiple_illumination_directions=[NO (one illumination direction)] multiple_angles=[YES (one file per angle)] multiple_tiles=[NO (one tile)] image_file_directory=%s image_file_pattern=%s timepoints_=%s acquisition_angles_=%s-%s calibration_type=[Same voxel-size for all views] calibration_definition=[User define voxel-size(s)] imglib2_data_container=[ArrayImg (faster)] pixel_distance_x=%s pixel_distance_y=%s pixel_distance_z=%s pixel_unit=um" % (dataset_xml_name, 
 																					dataset_dir, 
 																					file_pattern, 
 																					timepoints_list, 
@@ -1596,35 +1601,42 @@ def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, ti
 																					calibration_pixel_distances[0],
 																					calibration_pixel_distances[1],
 																					calibration_pixel_distances[2]
-																					))
+																					)
+	logging.info("Defining the full dataset: " + define_string)
+	IJ.run(
+		"Define dataset ...", define_string)
 
 	# use_same_min parameter is very important. If you do not use same min max intensity, point detection will not work for low intensity datasets
-	IJ.run(
-		"Detect Interest Points for Pairwise Registration", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads limit_amount_of_detections subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima maximum_number=%s type_of_detections_to_use=Brightest compute_on=[CPU (Java)]"
-		% (dataset_xml, sigma, threshold, max_detections_per_view))
+	detect_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads limit_amount_of_detections subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima maximum_number=%s type_of_detections_to_use=Brightest compute_on=[CPU (Java)]" % (dataset_xml, sigma, threshold, max_detections_per_view)
+	logging.info("Detecting interest points of the full dataset: " + detect_string)
+	IJ.run("Detect Interest Points for Pairwise Registration", detect_string)
 
-	IJ.run(
-		"Register Dataset based on Interest Points",
-		"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s"
-		% (dataset_xml, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations))
+	register_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s" % (dataset_xml, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations)
+	logging.info("Registering individual timepoints of the full dataset: " + register_string)
+	IJ.run("Register Dataset based on Interest Points",register_string)
 
-	IJ.run(
-		"Register Dataset based on Interest Points",
-		"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Match against one reference timepoint (no global optimization)] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads reference=%s consider_each_timepoint_as_rigid_unit transformation=Translation regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=1 significance=10 allowed_error_for_ransac=2 number_of_ransac_iterations=Normal interestpoint_grouping=[Group interest points (simply combine all in one virtual view)] interest=5" % (dataset_xml, reference_timepoint))
+	register_to_1_tp_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Match against one reference timepoint (no global optimization)] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads reference=%s consider_each_timepoint_as_rigid_unit transformation=Translation regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=1 significance=10 allowed_error_for_ransac=2 number_of_ransac_iterations=Normal interestpoint_grouping=[Group interest points (simply combine all in one virtual view)] interest=5" % (dataset_xml, reference_timepoint)
+	logging.info("Registering timepoints to tp 1 of the full dataset: " + register_to_1_tp_string)
+	IJ.run("Register Dataset based on Interest Points", register_to_1_tp_string)
 
-def symlink_all_files_from_directions_to_folder(directions_dirs_list, symlinked_folder):
+def link_all_files_from_directions_to_folder(directions_dirs_list, symlinked_folder):
 	for direction_dir in directions_dirs_list:
 		for file_path in get_tiffs_in_directory(direction_dir):
 			symlink_path = os.path.join(symlinked_folder, os.path.basename(file_path))
 			if not os.path.exists(symlink_path):
 				if "Linux" in platform.platform():
+					logging.info("Detected Linux operating system, using symlinks for fusion folder.")
 					os.symlink(file_path, symlink_path)
 				elif "Windows" in platform.platform():
-					os.system('cmd /c "mklink %s %s"' % (symlink_path, file_path))
+					logging.info("Detected Windows operating system, using hard links for fusion folder.")
+					os.system('cmd /c "mklink /H %s %s"' % (symlink_path, file_path))
 				else:
 					print("ERROR: Could not determine Operating System type. Exiting.")
 					logging.info("ERROR: Could not determine Operating System type. Exiting.")
 					exit(1)
+
+# def move_images_to_one_folder(dir_path):
+	
 
 def get_timepoint_list_from_folder(dir_path):
 	timepoints = []
@@ -2212,11 +2224,10 @@ def fusion_branch_processing(dataset_metadata_obj):
 	for ch in range(1, dataset_metadata_obj.number_of_channels + 1):
 		raw_direction_dirs = get_directions_dirs_for_folder(os.path.join(dataset_metadata_obj.raw_images_dir_path, "CH%04d" % ch), 
 															dataset_metadata_obj.number_of_directions)
-		fusion_setup_folder = os.path.join(dataset_metadata_obj.root_dir, LINK_DIR_FOR_FUSION, "CH%04d" % ch)
+		fusion_setup_folder = os.path.join(dataset_metadata_obj.root_dir, RAW_IMAGES_DIR_NAME, "CH%04d" % ch, "bigstitcher_dataset")
 		if not os.path.exists(fusion_setup_folder):
 			mkpath(fusion_setup_folder)
-		logging.info("Creating symlinked folder with all directions for fusion.")
-		symlink_all_files_from_directions_to_folder(raw_direction_dirs, fusion_setup_folder)
+
 
 		pre_fusion_dataset_basename = view_image_filename
 		pre_fusion_dataset_basename.direction = "all_"
@@ -2229,12 +2240,13 @@ def fusion_branch_processing(dataset_metadata_obj):
 		pre_fusion_dataset_basename = os.path.splitext(pre_fusion_dataset_basename.get_name())[0]
 		full_dataset_file_pattern.direction = "{aaaa}"
 		full_dataset_file_pattern.time_point = "{tttt}"
+		full_dataset_file_pattern = os.path.join("..", "DR{aaaa}", full_dataset_file_pattern.get_name())
 
 
 		create_and_register_full_dataset(fusion_setup_folder, 
 										pre_fusion_dataset_basename, 
-										full_dataset_file_pattern.get_name(), 
-										get_timepoint_list_from_folder(fusion_setup_folder),
+										full_dataset_file_pattern, 
+										get_timepoint_list_from_folder(raw_direction_dirs[0]),
 										(1, dataset_metadata_obj.number_of_directions),
 										(IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z))
 		dataset_xml_path = os.path.join(fusion_setup_folder, pre_fusion_dataset_basename + ".xml")
@@ -2248,10 +2260,14 @@ def fusion_branch_processing(dataset_metadata_obj):
 		define_bounding_box_for_fusion(dataset_xml_path, upscaled_vertical_box, "embryo_cropped")
 
 
-
+		print("Starting Fusion or Deconvolution")
 		fusion_output_dir = os.path.join(dataset_metadata_obj.root_dir, FUSED_DIR_NAME, "CH%04d" % ch)
 		if not os.path.exists(fusion_output_dir):
 			mkpath(fusion_output_dir)
+		if RUN_FUSION_UP_TO_START_OF_DECONV:
+			logging.info("Specified to run only up to the start of deconvolution. Done fusion branch.")
+			print("Specified to run only up to the start of deconvolution. Done fusion branch.")
+			return True
 		if ONLY_FUSE_FULL:
 			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"))
 		if FUSE_AND_DECONVOLVE_FULL:
