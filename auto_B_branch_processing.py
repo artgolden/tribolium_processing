@@ -12,7 +12,8 @@
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 # @ Boolean (label='Run fusion-branch only up to downsampled preview', value=true) run_fusion_up_to_downsampled_preview
 # @ Boolean (label='Run fusion-branch only up to start of deconvolution', value=False) run_fusion_up_to_start_of_deconvolution
-# @ String (choices={"Only Fuse full dataset", "Fuse+Deconvolve"}, style="radioButtonHorizontal", value="Fuse+Deconvolve") Only_fuse_or_deconvolve
+# @ String (choices={"Only Fuse full dataset", "Content-based fusion", "Fuse+Deconvolve"}, style="radioButtonHorizontal", value="Fuse+Deconvolve") Only_fuse_or_deconvolve
+# @ String (label='Thresholding for embryo segmentation', choices={"triangle", "minerror", "mean", "huang2"}, style="radioButtonHorizontal", value="triangle") segmentation_threshold_type
 # @ Float (label='Pixel distance X axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_x
 # @ Float (label='Pixel distance Y axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_y
 # @ Float (label='Pixel distance Z axis for calibration in um', value=4.0, style="format:#.00") pixel_distance_z
@@ -74,6 +75,9 @@ from ij.plugin import RoiEnlarger
 # - make an option to load the PSF from a file
 # - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
 # this is very slow. Probably need to switch to some other way of manually defining min/max.
+# - Integrate CLIJ2 deconvolution + content based fusion
+# - Write install documentation
+# - Split the script into files that will be imported
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -172,6 +176,8 @@ RUN_FUSION_UP_TO_START_OF_DECONV = run_fusion_up_to_start_of_deconvolution
 IMAGE_DOWNSAMPLING_FACTOR_XY = image_downsampling_factor = 4
 ONLY_FUSE_FULL = False
 FUSE_AND_DECONVOLVE_FULL = False
+FUSE_CONTENT_BASED = False
+SEGMENTATION_THRESHOLD_TYPE = segmentation_threshold_type
 
 IMAGE_PIXEL_DISTANCE_X = pixel_distance_x
 IMAGE_PIXEL_DISTANCE_Y = pixel_distance_y
@@ -181,6 +187,8 @@ NUM_DECONV_ITERATIONS = num_deconv_iterations
 
 if Only_fuse_or_deconvolve == "Only Fuse full dataset":
 	ONLY_FUSE_FULL = True
+if Only_fuse_or_deconvolve == "Content-based fusion":
+	FUSE_CONTENT_BASED = True
 if Only_fuse_or_deconvolve == "Fuse+Deconvolve":
 	FUSE_AND_DECONVOLVE_FULL = True
 
@@ -941,10 +949,13 @@ def apply_transformation_bigstitcher_dataset_0_timepoint(dataset_xml_path, affin
 def define_bounding_box_for_fusion(dataset_xml_path, box_coords, bounding_box_name):
 	IJ.run("Define Bounding Box for Fusion", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] bounding_box=[Maximal Bounding Box spanning all transformed views] bounding_box_name=%s minimal_x=%s minimal_y=%s minimal_z=%s maximal_x=%s maximal_y=%s maximal_z=%s" % (dataset_xml_path, bounding_box_name, box_coords["x_min"], box_coords["y_min"], box_coords["z_min"], box_coords["x_max"], box_coords["y_max"], box_coords["z_max"]))
 
-def fuse_dataset_to_tiff(dataset_xml_path, bounding_box_name, fused_xml_path):
+def fuse_dataset_to_tiff(dataset_xml_path, bounding_box_name, fused_xml_path, use_entropy_weighted_fusion=False):
+	use_weighted = ""
+	if use_entropy_weighted_fusion:
+		use_weighted = " use "
 	IJ.run(
 	"Fuse dataset ...",
-	"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, bounding_box_name, fused_xml_path))
+	"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend%s produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, bounding_box_name, use_weighted, fused_xml_path))
 
 def deconvolve_dataset_to_tiff(dataset_xml_path, 
 							bounding_box_name, 
@@ -1426,7 +1437,7 @@ def get_embryo_bounding_rectangle_and_params(max_projection, show_mask=False, fi
 	if fill_zeros:
 		fill_zero_pixels_with_median_intensity(max_projection)
 
-	mask = get_embryo_mask(image_16bit=max_projection, threshold_type="triangle")
+	mask = get_embryo_mask(image_16bit=max_projection, threshold_type=SEGMENTATION_THRESHOLD_TYPE)
 
 
 	if show_mask:
@@ -2270,6 +2281,8 @@ def fusion_branch_processing(dataset_metadata_obj):
 			return True
 		if ONLY_FUSE_FULL:
 			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"))
+		if FUSE_CONTENT_BASED:
+			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"), use_entropy_weighted_fusion=True)
 		if FUSE_AND_DECONVOLVE_FULL:
 			deconvolve_dataset_to_tiff(dataset_xml_path, 
 										"embryo_cropped",
