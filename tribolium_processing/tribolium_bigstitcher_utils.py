@@ -91,6 +91,14 @@ def fuse_dataset_to_tiff(dataset_xml_path, bounding_box_name, fused_xml_path, us
 	"Fuse dataset ...",
 	"select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend%s produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, bounding_box_name, use_weighted, fused_xml_path))
 
+def extract_psf(dataset_xml_path, timepoint=1):
+	IJ.run("Extract PSFs", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_timepoint=[Timepoint %s] interest_points=beads use_corresponding remove_min_intensity_projections_from_psf psf_size_x=19 psf_size_y=19 psf_size_z=15" % (dataset_xml_path, timepoint))
+
+
+def assign_psf(dataset_xml_path, from_timepoint=1):
+	IJ.run("Assign PSFs", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type=[Duplicate PSFs from other timepoint] source_timepoint=[Timepoint %s]" % (dataset_xml_path, from_timepoint)) 
+
+
 def deconvolve_dataset_to_tiff(dataset_xml_path, 
 							bounding_box_name, 
 							fused_xml_path, 
@@ -102,7 +110,7 @@ def deconvolve_dataset_to_tiff(dataset_xml_path,
 	if cuda_directory is not None:
 		gpu_id = "gpu_1"
 		cuda_directory = "cuda_directory=" + cuda_directory + " select_native_library_for_cudafourierconvolution=libFourierConvolutionCUDALib.so "
-	IJ.run("Extract PSFs", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] interest_points=beads use_corresponding remove_min_intensity_projections_from_psf psf_size_x=19 psf_size_y=19 psf_size_z=25" % (dataset_xml_path))
+	
 	box_dims = get_bounding_box_coords_from_xml(dataset_xml_path, bounding_box_name)
 	box_string = "[%s (%sx%sx%spx)]" % (bounding_box_name,
 										 abs(box_dims["x_min"] - box_dims["x_max"]) + 1,

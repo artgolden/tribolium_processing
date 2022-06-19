@@ -11,7 +11,11 @@
                 ]
             },
             "head_direction": "right",
-            "use_manual_bounding_box": false
+            "use_manual_bounding_box": false,
+            "timepoints_to_fuse": [
+                1,
+                23
+            ]
         },
         {
             "ID": 3,

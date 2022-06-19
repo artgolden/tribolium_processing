@@ -34,6 +34,7 @@ import fnmatch
 import json
 import logging
 from datetime import datetime
+from time import time
 import traceback
 import sys
 
@@ -93,7 +94,8 @@ Example JSON metadata file contents:
 				]				
 			},
 			"head_direction": "right",
-			"use_manual_bounding_box": false
+			"use_manual_bounding_box": false,
+			"timepoints_to_fuse": [1,100]
 		},
 		{
 			"ID": 3,
@@ -206,6 +208,8 @@ class DatasetMetadata:
 	embryo_head_direction = ""
 	use_manual_b_branch_bounding_box = False
 	planes_to_keep_per_direction_b_branch = None
+	tp_fuse_start = 1
+	tp_fuse_end = -1
 
 	def __init__(
 				self, 
@@ -214,7 +218,9 @@ class DatasetMetadata:
 				specimen_directions_in_channels, 
 				embryo_head_direction,
 				use_manual_b_branch_bounding_box=False,
-				planes_to_keep_per_direction_b_branch=None):
+				planes_to_keep_per_direction_b_branch=None,
+				tp_fuse_start=1,
+				tp_fuse_end=-1):
 		self.id = id
 		self.root_dir = root_dir
 		self.datasets_dir = os.path.dirname(root_dir)
@@ -225,6 +231,8 @@ class DatasetMetadata:
 		self.number_of_channels = len(specimen_directions_in_channels)
 		self.number_of_directions = len(specimen_directions_in_channels[0])
 		self.raw_images_dir_path = os.path.join(root_dir, RAW_IMAGES_DIR_NAME)
+		self.tp_fuse_start = tp_fuse_start
+		self.tp_fuse_end = tp_fuse_end
 
 
 def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
@@ -244,6 +252,12 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 		planes_to_keep_per_direction_b_branch=metadata_dict["planes_to_keep_per_direction"]
 	else:
 		planes_to_keep_per_direction_b_branch = None
+	
+	tp_fuse_start = 1
+	tp_fuse_end = -1
+	if "timepoints_to_fuse" in metadata_dict.keys():
+		tp_fuse_start = metadata_dict["timepoints_to_fuse"][0]
+		tp_fuse_end = metadata_dict["timepoints_to_fuse"][1]
 
 	return DatasetMetadata(
 							id=metadata_dict["ID"], 
@@ -251,7 +265,10 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 							specimen_directions_in_channels=specimen_directions_in_channels, 
 							embryo_head_direction = metadata_dict["head_direction"],
 							use_manual_b_branch_bounding_box=metadata_dict["use_manual_bounding_box"],
-							planes_to_keep_per_direction_b_branch=planes_to_keep_per_direction_b_branch)
+							planes_to_keep_per_direction_b_branch=planes_to_keep_per_direction_b_branch,
+							tp_fuse_start=tp_fuse_start,
+							tp_fuse_end=tp_fuse_end,
+							)
 		
 SegmentationResults = namedtuple("SegmentationResults", ["transformation_embryo_to_center", "rotation_angle_z", "rotation_angle_y", "embryo_crop_box"])
 
@@ -855,7 +872,7 @@ def upscale_translation_matrix(matrix, downsampling_factor_XY):
 	upscaled_matrix[2][3] = upscaled_matrix[2][3] * downsampling_factor_XY
 	return upscaled_matrix
 
-def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, timepoints_list, angles_from_to, calibration_pixel_distances):
+def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, timepoints_list, angles_from_to, calibration_pixel_distances, reference_timepoint=1):
 	dataset_xml_name = "%s.xml" % dataset_name
 	dataset_xml = os.path.join(dataset_dir, "%s.xml" % dataset_name)
 	sigma = 2.0
@@ -867,7 +884,6 @@ def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, ti
 	allowed_error_for_ransac = 2
 	number_of_ransac_iterations = "Normal"
 
-	reference_timepoint = 1
 
 
 	define_string = "define_dataset=[Manual Loader (TIFF only, ImageJ Opener)] project_filename=%s multiple_timepoints=[YES (one file per time-point)] multiple_channels=[NO (one channel)] _____multiple_illumination_directions=[NO (one illumination direction)] multiple_angles=[YES (one file per angle)] multiple_tiles=[NO (one tile)] image_file_directory=%s image_file_pattern=%s timepoints_=%s acquisition_angles_=%s-%s calibration_type=[Same voxel-size for all views] calibration_definition=[User define voxel-size(s)] imglib2_data_container=[ArrayImg (faster)] pixel_distance_x=%s pixel_distance_y=%s pixel_distance_z=%s pixel_unit=um" % (dataset_xml_name, 
@@ -894,7 +910,7 @@ def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, ti
 	IJ.run("Register Dataset based on Interest Points",register_string)
 
 	register_to_1_tp_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Match against one reference timepoint (no global optimization)] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads reference=%s consider_each_timepoint_as_rigid_unit transformation=Translation regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=1 significance=10 allowed_error_for_ransac=2 number_of_ransac_iterations=Normal interestpoint_grouping=[Group interest points (simply combine all in one virtual view)] interest=5" % (dataset_xml, reference_timepoint)
-	logging.info("Registering timepoints to tp 1 of the full dataset: " + register_to_1_tp_string)
+	logging.info("Registering timepoints to tp %s of the full dataset: %s" % (reference_timepoint, register_to_1_tp_string))
 	IJ.run("Register Dataset based on Interest Points", register_to_1_tp_string)
 
 def link_all_files_from_directions_to_folder(directions_dirs_list, symlinked_folder):
@@ -916,7 +932,7 @@ def link_all_files_from_directions_to_folder(directions_dirs_list, symlinked_fol
 # def move_images_to_one_folder(dir_path):
 	
 
-def get_timepoint_list_from_folder(dir_path):
+def get_timepoint_list_from_folder(dir_path, tp_start, tp_end):
 	timepoints = []
 	for file in get_tiffs_in_directory(dir_path):
 		filename = FredericFile(os.path.basename(file))
@@ -928,7 +944,11 @@ def get_timepoint_list_from_folder(dir_path):
 			return False
 	# removing duplicates and sorting
 	timepoints = list(dict.fromkeys(timepoints))
-	timepoints.sort()  
+	timepoints.sort()
+
+	# subset timepoints
+	if tp_end != -1:
+		timepoints = [timepoints[i] for i in range(timepoints.index(tp_start), timepoints.index(tp_end) + 1)]  
 	return timepoints 
 
 
@@ -995,6 +1015,17 @@ def is_specimen_input_valid(specimens_per_direction):
 			return False
 	return True
 
+def is_timepoints_to_fuse_valid(tp_range):
+	start = tp_range[0]
+	end = tp_range[1]
+	if not isinstance(start, int) or not isinstance(end, int):
+		return False
+	if end < start:
+		return False
+	if start < 1:
+		return False
+	return True
+
 def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 	for dataset in datasets_meta["datasets"]:
 		if "ID" not in dataset:
@@ -1029,6 +1060,11 @@ def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 				exit(1)
 		if not dataset["head_direction"] in ["right", "left"]:
 			print("Error while parsing .json file: not a valid head_direction \"%s\" for the dataset with ID: \"%s\". Exiting." % (
+				dataset["head_direction"], dataset_id))
+			print(EXAMPLE_JSON_METADATA_FILE)
+			exit(1)
+		if "timepoints_to_fuse" in dataset.keys() and not is_timepoints_to_fuse_valid(dataset["timepoints_to_fuse"]):
+			print("Error while parsing .json file: not valid timepoints_to_fuse \"%s\" for the dataset with ID: \"%s\". Exiting." % (
 				dataset["head_direction"], dataset_id))
 			print(EXAMPLE_JSON_METADATA_FILE)
 			exit(1)
@@ -1430,8 +1466,9 @@ def fusion_branch_processing(dataset_metadata_obj):
 	raw_img_ch_1_dir = os.path.join(dataset_metadata_obj.raw_images_dir_path, "CH0001")
 	raw_direction_dirs = get_directions_dirs_for_folder(raw_img_ch_1_dir, dataset_metadata_obj.number_of_directions)
 	example_raw_filename = get_any_tiff_name_from_dir(raw_direction_dirs[0])
+	reference_timepoint = dataset_metadata_obj.tp_fuse_start
 
-	downsampled_dir = os.path.join(dataset_metadata_obj.root_dir, "downsampled_1_timepoint")
+	downsampled_dir = os.path.join(dataset_metadata_obj.root_dir, "downsampled_%s_timepoint" % reference_timepoint)
 	if not os.path.exists(downsampled_dir):
 		mkpath(downsampled_dir)
 
@@ -1440,9 +1477,9 @@ def fusion_branch_processing(dataset_metadata_obj):
 		mkpath(cropped_projections_dir)
 
 	view_image_filename = example_raw_filename
-	view_image_filename.time_point = "%04d" % 1
+	view_image_filename.time_point = "%04d" % reference_timepoint
 
-	# Downsample timepoint 1 to a new folder
+	# Downsample reference timepoint to a new folder
 	logging.info("Downsampling images for fusion+segmentation")
 	for direction, direction_dir in zip(range(1, dataset_metadata_obj.number_of_directions + 1), raw_direction_dirs):
 		view_image_filename.direction = "%04d" % (direction + 1)
@@ -1462,11 +1499,11 @@ def fusion_branch_processing(dataset_metadata_obj):
 		fs = FileSaver(downsampled_image)
 		fs.saveAsTiff(downsampled_image_path)
 
-	# Fuse downsampled timepoint 1
+	# Fuse downsampled reference timepoint
 	view_dims = get_image_dimensions_from_file(os.path.join(downsampled_dir, view_image_filename.get_name()))
 	fuse_file_pattern = view_image_filename
 	fuse_file_pattern.direction = "{aaaa}"
-	logging.info("DS%04d Fusing downsampled 1 timepoint" % dataset_metadata_obj.id)
+	logging.info("DS%04d Fusing downsampled %s timepoint as reference" % (dataset_metadata_obj.id, reference_timepoint))
 	if not DEBUG_USE_FUSED_PREVIEW_CACHE:
 		create_and_fuse_preview_dataset(downsampled_dir, fuse_file_pattern.get_name(), (1, dataset_metadata_obj.number_of_directions), view_dims)
 
@@ -1531,13 +1568,19 @@ def fusion_branch_processing(dataset_metadata_obj):
 		full_dataset_file_pattern.time_point = "{tttt}"
 		full_dataset_file_pattern = os.path.join("..", "DR{aaaa}", full_dataset_file_pattern.get_name())
 
-
+		selected_timepoints = get_timepoint_list_from_folder(
+											raw_direction_dirs[0], 
+											dataset_metadata_obj.tp_fuse_start, 
+											dataset_metadata_obj.tp_fuse_end)
+		print("Creating dataset for fusion with selected timepoints: %s-%s" % (selected_timepoints[0], selected_timepoints[-1]))
+		logging.info("Creating dataset for fusion with selected timepoints: %s-%s" % (selected_timepoints[0], selected_timepoints[-1]))
 		create_and_register_full_dataset(fusion_setup_folder, 
 										pre_fusion_dataset_basename, 
 										full_dataset_file_pattern, 
-										get_timepoint_list_from_folder(raw_direction_dirs[0]),
+										selected_timepoints,
 										(1, dataset_metadata_obj.number_of_directions),
-										(IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z))
+										(IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z),
+										reference_timepoint=reference_timepoint)
 		dataset_xml_path = os.path.join(fusion_setup_folder, pre_fusion_dataset_basename + ".xml")
 		apply_transformation_bigstitcher_dataset(dataset_xml_path, upscaled_translation_embryo_to_center)
 		rotate_bigstitcher_dataset(dataset_xml_path, "z", segmentation_results.rotation_angle_z)
@@ -1562,6 +1605,8 @@ def fusion_branch_processing(dataset_metadata_obj):
 		if FUSE_CONTENT_BASED:
 			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"), use_entropy_weighted_fusion=True)
 		if FUSE_AND_DECONVOLVE_FULL:
+			extract_psf(dataset_xml_path, reference_timepoint)
+			assign_psf(dataset_xml_path, reference_timepoint)
 			deconvolve_dataset_to_tiff(dataset_xml_path, 
 										"embryo_cropped",
 										os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"),
