@@ -1,0 +1,17 @@
+run("Close All");
+open("/media/tema/big_storage/work/goethe/fiji/test_dataset/DS0016_MEME6/test_content_based_algorithm/MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-1.tif");
+selectWindow("MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-1.tif");
+run("Duplicate...", "duplicate");
+selectWindow("MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-1.tif");
+run("Gaussian Blur 3D...", "x=20 y=20 z=20");
+imageCalculator("Subtract create 32-bit stack", "MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-2.tif","MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-1.tif");
+selectWindow("Result of MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-2.tif");
+imageCalculator("Multiply create 32-bit stack", "Result of MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-2.tif","Result of MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-2.tif");
+selectWindow("Result of Result of MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-2.tif");
+run("Gaussian Blur 3D...", "x=40 y=40 z=40");
+//run("Brightness/Contrast...");
+run("Enhance Contrast", "saturated=0.35");
+run("Enhance Contrast", "saturated=0.35");
+selectWindow("MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-2.tif");
+imageCalculator("Multiply create 32-bit stack", "MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-2.tif","Result of Result of MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-2.tif");
+selectWindow("Result of MGolden2022A-DS0016TP0001DR0001CH0001PL(ZS)-2.tif");
