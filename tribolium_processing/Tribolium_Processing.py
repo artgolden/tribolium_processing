@@ -67,17 +67,15 @@ tribolium_image_utils.dsServiceImageUtilsLocal = ds
 tribolium_image_utils.convertServiceImageUtilsLocal = convert
 
 # TODO: 
-# - Write current limitations and implicid assumptions in the documentation
+# - Write current limitations and implicit assumptions in the documentation
 # - test 2 channel case
 # - make option to redo the downsampled images for preview, or better, check if they are the same dimension as planned
-# - Make two separate finished files for B and fusion branches
-# - save the PSF from beads from 1 timepoint to file and use it for all timepoints
-# - timepoints selection for fusion as a parameter
 # - make an option to load the PSF from a file
 # - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
 # this is very slow. Probably need to switch to some other way of manually defining min/max.
 # - Integrate CLIJ2 deconvolution + content based fusion
 # - Write install documentation
+# - Handle exception when embryo could not be segmented
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -148,9 +146,13 @@ MONTAGE_DIR_NAME = "(B5)-TStacks-ZN-Montage"
 FUSED_DIR_NAME = "(FUSION)-Fused-cropped-dataset"
 LINK_DIR_FOR_FUSION = "(FUSION)-linked-dataset"
 
-DATASET_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
-DATASET_FINISHED_FILE_NAME = "B_BRANCH_FINISHED"
-DATASET_ACTIVE_FILE_NAME = "B_BRANCH_ACTIVE"
+B_BRANCH_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
+B_BRANCH_FINISHED_FILE_NAME = "B_BRANCH_FINISHED"
+B_BRANCH_LOCK_FILE_NAME = "B_BRANCH_LOCK"
+
+FUSION_BRANCH_ERROR_FILE_NAME = "FUSION_BRANCH_ERRORED"
+FUSION_BRANCH_FINISHED_FILE_NAME = "FUSION_BRANCH_FINISHED"
+FUSION_BRANCH_LOCK_FILE_NAME = "FUSION_BRANCH_LOCK"
 
 MANUAL_CROP_BOX_FILE_NAME = "manual_crop_box"
 
@@ -1078,7 +1080,9 @@ def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 			exit(1)
 	logging.info("Checked metadata file. No errors found.")
 
-
+def logging_broadcast(string):
+	print(string)
+	logging.info(string)
 #					Pipeline main process functions
 
 
@@ -1209,8 +1213,6 @@ def b_branch_processing(dataset_metadata_obj):
 			logging.info(
 				"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 			print("ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
-			open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
-			os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
 			return False
 		fs = FileSaver(cropped_max_time_proj)
 		fs.saveAsTiff(os.path.join(
@@ -1281,8 +1283,6 @@ def b_branch_processing(dataset_metadata_obj):
 				logging.info(
 					"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 				print("ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
-				open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
-				os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
 				return False
 			fs = FileSaver(cropped_max_time_proj)
 			fs.saveAsTiff(os.path.join(
@@ -1354,9 +1354,7 @@ def b_branch_processing(dataset_metadata_obj):
 								channel, direction, e))
 							print("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
 								channel, direction, e))
-							open(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME), 'a').close()
-							os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
-							print("Encountered an exception while trying to find which planes to keep. Skipping the dataset.")
+							print("Encountered an exception while trying to find which planes to keep. Skipping the dataset B-branch.")
 							return False
 						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
 									(channel, direction, planes_kept))
@@ -1658,73 +1656,83 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		specimen_directions_in_channels = dataset_metadata_obj.specimen_directions_in_channels
 		dataset_id = dataset_metadata_obj.id
 
-		
-		logging.info("\n%s\nStarted processing dataset: DS%04d \n%s\n" %
-					 ("#" * 100, dataset_id, "#" * 100))
-		print("Started processing dataset: DS%04d" % dataset_id)
-		if os.path.exists(os.path.join(root_dataset_dir, DATASET_FINISHED_FILE_NAME)):
-			logging.info(
-				"Found %s file. Dataset DS%04d already processed, skipping." % (DATASET_FINISHED_FILE_NAME, dataset_id))
-			print("Found %s file. Dataset DS%04d already processed, skipping." %
-				  (DATASET_FINISHED_FILE_NAME, dataset_id))
-			continue
-		if os.path.exists(os.path.join(root_dataset_dir, DATASET_ERROR_FILE_NAME)):
-			logging.info(
-				"Found %s file. Dataset DS%04d errored while previous processing, skipping." % (DATASET_ERROR_FILE_NAME, dataset_id))
-			print("Found %s file. Dataset DS%04d errored while previous processing, skipping." %
-				  (DATASET_ERROR_FILE_NAME, dataset_id))
-			continue
-		if os.path.exists(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME)):
-			logging.info(
-				"Found %s file. Perhaps the dataset DS%04d is currently being processed by other Fiji instance, skipping." % (DATASET_ACTIVE_FILE_NAME, dataset_id))
-			print("Found %s file. Perhaps the dataset DS%04d is currently being processed by other Fiji instance, skipping." %
-				  (DATASET_ACTIVE_FILE_NAME, dataset_id))
-			continue
-		open(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME), 'a').close()
+		skip_b_branch = False
+		skip_fusion_branch = False
 
-		logging.info("\tArranging raw image files")
+		
+		logging_broadcast("\n%s\nStarted processing dataset: DS%04d \n%s\n" %
+					 ("#" * 100, dataset_id, "#" * 100))
+		if os.path.exists(os.path.join(root_dataset_dir, B_BRANCH_FINISHED_FILE_NAME)):
+			logging_broadcast(
+				"Found %s file. Dataset DS%04d B-branch already processed, skipping." % (B_BRANCH_FINISHED_FILE_NAME, dataset_id))
+			skip_b_branch = True
+		if os.path.exists(os.path.join(root_dataset_dir, FUSION_BRANCH_FINISHED_FILE_NAME)):
+			logging_broadcast(
+				"Found %s file. Dataset DS%04d FUSION-branch already processed, skipping." % (FUSION_BRANCH_FINISHED_FILE_NAME, dataset_id))
+			skip_fusion_branch = True
+
+		if os.path.exists(os.path.join(root_dataset_dir, B_BRANCH_ERROR_FILE_NAME)):
+			logging_broadcast(
+				"Found %s file. Dataset DS%04d B-branch errored while previous processing, skipping." % (B_BRANCH_ERROR_FILE_NAME, dataset_id))
+			skip_b_branch = True
+		if os.path.exists(os.path.join(root_dataset_dir, FUSION_BRANCH_ERROR_FILE_NAME)):
+			logging_broadcast(
+				"Found %s file. Dataset DS%04d FUSION-branch errored while previous processing, skipping." % (FUSION_BRANCH_ERROR_FILE_NAME, dataset_id))
+			skip_fusion_branch = True
+
+
+		# Here there maybe a race condition for moving files if two pipeline instances are spawned in parallel. But it should not be a problem.
+		logging_broadcast("\tArranging raw image files")
 		try:
 			move_files(
 				raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix)
 		except ValueError as e:
-			logging.info(
+			logging_broadcast(
 				"Error while moving files for the dataset:\"%s\", skipping the dataset. Error:\n %s" % (dataset_id, e))
-			print("Error while moving files for the dataset:\"%s\", skipping the dataset." % dataset_id)
-			print(e)
 			continue
-		logging.info("\tFiles arranged, starting processing.")
+		logging_broadcast("\tFiles arranged, starting processing.")
 
 		
-		if DO_B_BRANCH:
-			print("Starting B-branch processing. DS%04d" % dataset_metadata_obj.id)
-			logging.info("Starting B-branch processing. DS%04d" % dataset_metadata_obj.id)
+		if os.path.exists(os.path.join(root_dataset_dir, B_BRANCH_LOCK_FILE_NAME)):
+			logging_broadcast(
+				"Found %s file. Perhaps the dataset DS%04d B-branch is currently being processed by other Fiji instance, skipping." % (B_BRANCH_LOCK_FILE_NAME, dataset_id))
+			skip_b_branch = True
+		if DO_B_BRANCH and not skip_b_branch:
+			open(os.path.join(root_dataset_dir, B_BRANCH_LOCK_FILE_NAME), 'a').close()
+			logging_broadcast("Starting B-branch processing. DS%04d" % dataset_metadata_obj.id)
 			b_branch_successfull = b_branch_processing(dataset_metadata_obj=dataset_metadata_obj)
+			os.remove(os.path.join(root_dataset_dir, B_BRANCH_LOCK_FILE_NAME))
 			if not b_branch_successfull:
-				logging.info("ERROR: B-branch failed. Had to skip the dataset DS%04d." % dataset_metadata_obj.id)
-				continue
-		else: 
-			print("B-branch processing set to FALSE. Skipping B-branch. DS%04d" % dataset_metadata_obj.id)
-			logging.info("B-branch processing set to FALSE. Skipping B-branch. DS%04d." % dataset_metadata_obj.id)
+				logging_broadcast("ERROR: B-branch failed. Had to skip the dataset DS%04d." % dataset_metadata_obj.id)
+				open(os.path.join(root_dataset_dir, B_BRANCH_ERROR_FILE_NAME), 'a').close()
+			else:
+				open(os.path.join(root_dataset_dir, B_BRANCH_FINISHED_FILE_NAME), 'a').close()
+		if not DO_B_BRANCH: 
+			logging_broadcast("B-branch processing set to FALSE. Skipping B-branch. DS%04d." % dataset_metadata_obj.id)
 
-		if DO_FUSION_BRANCH:
-			print("Starting Fusion-branch processing. DS%04d" % dataset_metadata_obj.id)
-			logging.info("Starting Fusion-branch processing. DS%04d" % dataset_metadata_obj.id)
+
+
+		if os.path.exists(os.path.join(root_dataset_dir, FUSION_BRANCH_LOCK_FILE_NAME)):
+			logging_broadcast(
+				"Found %s file. Perhaps the dataset DS%04d FUSION-branch is currently being processed by other Fiji instance, skipping." % (FUSION_BRANCH_LOCK_FILE_NAME, dataset_id))
+			skip_fusion_branch = True
+		if DO_FUSION_BRANCH and not skip_fusion_branch:
+			open(os.path.join(root_dataset_dir, FUSION_BRANCH_LOCK_FILE_NAME), 'a').close()
+			logging_broadcast("Starting Fusion-branch processing. DS%04d" % dataset_metadata_obj.id)
 			fusion_branch_successfull = fusion_branch_processing(dataset_metadata_obj=dataset_metadata_obj)
+			os.remove(os.path.join(root_dataset_dir, FUSION_BRANCH_LOCK_FILE_NAME))
 			if not fusion_branch_successfull:
 				logging.info("ERROR: Fusion-branch failed. Had to skip the dataset DS%04d." % dataset_metadata_obj.id)
-				continue
-		else: 
-			print("Fusion-branch processing set to FALSE. Skipping B-branch. DS%04d" % dataset_metadata_obj.id)
-			logging.info("Fusion-branch processing set to FALSE. Skipping Fusion-branch. DS%04d." % dataset_metadata_obj.id)
+				open(os.path.join(root_dataset_dir, FUSION_BRANCH_ERROR_FILE_NAME), 'a').close()
+			else:
+				open(os.path.join(root_dataset_dir, FUSION_BRANCH_FINISHED_FILE_NAME), 'a').close()
+		if not DO_FUSION_BRANCH: 
+			logging_broadcast("Fusion-branch processing set to FALSE. Skipping Fusion-branch. DS%04d." % dataset_metadata_obj.id)
 
-		open(os.path.join(root_dataset_dir, DATASET_FINISHED_FILE_NAME), 'a').close()
-		os.remove(os.path.join(root_dataset_dir, DATASET_ACTIVE_FILE_NAME))
-		logging.info("Finished processing dataset DS%04d successfully." % dataset_id)
-		print("Finished processing dataset DS%04d successfully." % dataset_id)
+		logging_broadcast("Finished processing dataset DS%04d." % dataset_id)
 
 
-	logging.info("Finished processing all datasets.")
-	print("Finished processing all datasets.")
+	logging_broadcast("Finished processing all datasets.")
 
 
 if __name__ in ['__builtin__', '__main__']:
