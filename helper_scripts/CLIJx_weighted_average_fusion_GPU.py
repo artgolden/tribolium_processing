@@ -4,6 +4,11 @@
 #OUTPUT projections_stack
 
 
+# TODO: 
+# - Check where 32-bit conversion is not needed
+# - find CLIJ conversion to float
+# - load individual views lazily
+
 import timeit
 from ij import IJ
 from net.haesleinhuepf.clijx import CLIJx
@@ -18,16 +23,23 @@ direction4_raw = IJ.openImage("/media/tema/big_storage/work/goethe/fiji/test_dat
 
 dataset_xml_path = "/media/tema/big_storage/work/goethe/fiji/test_dataset/DS0016_MEME6/downsampled_23_timepoint/dataset.xml"
 
+transformed_psf_view_1 = IJ.openImage("/media/tema/big_storage/work/goethe/fiji/test_dataset/DS0016_MEME6/downsampled_23_timepoint/transformed_psf/tp_0_view_1.tif")
+transformed_psf_view_2 = IJ.openImage("/media/tema/big_storage/work/goethe/fiji/test_dataset/DS0016_MEME6/downsampled_23_timepoint/transformed_psf/tp_0_view_2.tif")
+transformed_psf_view_3 = IJ.openImage("/media/tema/big_storage/work/goethe/fiji/test_dataset/DS0016_MEME6/downsampled_23_timepoint/transformed_psf/tp_0_view_3.tif")
+transformed_psf_view_4 = IJ.openImage("/media/tema/big_storage/work/goethe/fiji/test_dataset/DS0016_MEME6/downsampled_23_timepoint/transformed_psf/tp_0_view_4.tif")
+
 reference_view = direction1_raw
 
 views = [direction1_raw, direction2_raw, direction3_raw, direction4_raw]
+transformed_psfs = [transformed_psf_view_1, transformed_psf_view_2, transformed_psf_view_3, transformed_psf_view_4]
+
 for imp in views:
     IJ.run(imp, "32-bit", "")
 
 n_views = len(views)
 
 downsampling_factor = 4
-
+num_iterations = 8
 
 start_time = timeit.default_timer()
 
@@ -35,12 +47,15 @@ start_time = timeit.default_timer()
 clijx = CLIJx.getInstance()
 
 views_gpu = [clijx.convert(view, ClearCLBuffer) for view in views]
+transformed_psfs_gpu = [clijx.convert(psf, ClearCLBuffer) for psf in transformed_psfs]
 buffer1 = clijx.create(views_gpu[0])
 buffer2 = clijx.create(views_gpu[0])
 avg_weights = clijx.create(views_gpu[0])
 
-# input_psf = clijx.convert(psf, ClearCLBuffer)
-# DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, input, input_psf, output_deconv, num_iterations, 0.0, False)
+for i, view, psf in zip(range(n_views), views_gpu, transformed_psfs_gpu):
+    print("Deconvolving %s view" % i)
+    DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, view, psf, buffer1, num_iterations, 0.0, False)
+    clijx.copy(buffer1, view)
 
 
 def compute_entropy_weight(view, output, sigma1=20, sigma2=40):
