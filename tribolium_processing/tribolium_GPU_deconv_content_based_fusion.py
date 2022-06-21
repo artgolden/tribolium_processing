@@ -4,12 +4,13 @@ from net.haesleinhuepf.clijx import CLIJx
 from net.haesleinhuepf.clij.clearcl import ClearCLBuffer
 from net.haesleinhuepf.clijx.plugins import DeconvolveRichardsonLucyFFT
 
+ops = None
 
 def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs, num_iterations=8, sigma_scaling_factor_xy=1, sigma_scaling_factor_z=0.5):
     """Do deconvolution on individual views, then fuse them adjusting for entropy
 
     Args:
-        views (ImagePlus[]): 32-bit list of registered(transformed to be aligned) image stacks, ready for fusion
+        views (ImagePlus[]): 32-bit list of registered(transformed to be aligned) image stacks (16-bit will be converted automatically), ready for fusion
         transformed_psfs (ImagePlus[]): 32-bit transformed PSF for each view according to each view's registration affine transformation
         num_iterations (int, optional): number of deconvolution iterations. Defaults to 8.
         sigma_scaling_factor_xy (int, optional): scaling factor of X and Y axis, used to calculate sigmas for quick entropy calculation. Defaults to 4.
@@ -19,6 +20,8 @@ def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs
         ImagePlus: 32-bit fused image 
     """
     n_views = len(views)
+    for view in views:
+        ops.run("convert.uint16", view)
 
     start_time = timeit.default_timer()
 

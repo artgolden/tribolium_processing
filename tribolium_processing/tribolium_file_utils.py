@@ -75,3 +75,4 @@ def get_any_tiff_name_from_dir(input_dir):
 
 	file_name = FredericFile(file_name)
 	return file_name
+	

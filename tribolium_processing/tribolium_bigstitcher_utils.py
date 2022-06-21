@@ -41,18 +41,19 @@ def get_fusion_tranformation_from_xml_file(xml_path):
 def get_bounding_box_coords_from_xml(xml_path, box_name):
     tree = ET.parse(xml_path)
     root = tree.getroot()
-    for box in root.iter('BoundingBoxes'):
-         if box[0].attrib["name"] == box_name:
-             min = box[0].find("min").text.split(" ")
-             max = box[0].find("max").text.split(" ")
-             box_coords = {
-                 "x_min" : int(min[0]),
-                 "y_min" : int(min[1]),
-                 "z_min" : int(min[2]),
-                 "x_max" : int(max[0]),
-                 "y_max" : int(max[1]),
-                 "z_max" : int(max[2])
-             }
+    box_coords = None
+    for box in root.findall("./BoundingBoxes/BoundingBoxDefinition[@name='%s']" % box_name):
+        print(box.attrib["name"])
+        min = box.find("min").text.split(" ")
+        max = box.find("max").text.split(" ")
+        box_coords = {
+            "x_min" : int(min[0]),
+            "y_min" : int(min[1]),
+            "z_min" : int(min[2]),
+            "x_max" : int(max[0]),
+            "y_max" : int(max[1]),
+            "z_max" : int(max[2])
+        }
     return box_coords
 
 def rotate_bigstitcher_dataset(dataset_xml_path, axis_of_rotation, angle):
@@ -155,8 +156,11 @@ def save_transformed_psfs(dataset_xml_path, transformed_psf_dir, timepoint, num_
 
 def save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, timepoint, num_angles):
 	xml_path = os.path.join(temp_dir_fusion, "raw_registered_cropped.xml")
+	raw_transformed_paths = [os.path.join(temp_dir_fusion, "fused_tp_%s_vs_%s.tif" % (timepoint, angle)) for angle in range(num_angles)]
+	if all([os.path.exists(path) for path in raw_transformed_paths]):
+		print("Found files for raw transformed stacks for the timepoint: %s Skipping raw transformed stacks creation." % timepoint) 
+		return raw_transformed_paths
 	# IJ.run("Fuse dataset ...", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_timepoint=[Timepoint %s] bounding_box=embryo_cropped downsampling=1 pixel_type=[32-bit floating point] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each view] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, timepoint, xml_path))
 	IJ.run("Fuse dataset ...", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_timepoint=[Timepoint %s] bounding_box=embryo_cropped downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] produce=[Each view] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, timepoint, xml_path))
 
-	raw_transformed_paths = [os.path.join(temp_dir_fusion, "fused_tp_%s_vs_%s.tif" % (timepoint, angle)) for angle in range(num_angles)]
 	return raw_transformed_paths

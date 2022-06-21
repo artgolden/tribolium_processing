@@ -5,7 +5,8 @@
 # @ File(label='Choose a file with metadata about embryo directions', style='file') metadata_file
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 # @ Boolean (label='Compress images?', value=true) compress_on_save
-# @ Boolean (label='Use previously cropped stacks (if present)?', value=false) use_cropped_cache
+# @ Boolean (label='B-branch: Use previously cropped stacks (if present)?', value=false) use_cropped_cache
+# @ Boolean (label='Fusion-branch: Use previously created dataset (if present)?', value=false) use_fusion_dataset_cache
 # @ Boolean (label='Do B-branch processing?', value=false) do_b_branch
 # @ Boolean (label='Do Fusion-branch processing?', value=false) do_fusion_branch
 # @ Boolean (label='Do histogram matching adjustment?', value=true) do_histogram_matching
@@ -35,8 +36,7 @@ import fnmatch
 import json
 import logging
 from datetime import datetime
-import shutil
-from time import time
+import time
 import traceback
 import sys
 import uuid
@@ -62,14 +62,16 @@ from tribolium_bigstitcher_utils import *
 from tribolium_image_utils import *
 from tribolium_math_utils import *
 from tribolium_file_utils import *
-from tribolium_GPU_deconv_content_based_fusion import *
 import tribolium_image_utils
+import tribolium_GPU_deconv_content_based_fusion
 
 # A very clunky way of importing services for image_utils module. I could find a way to import them directly there, so I have to set the ones that I get from ImageJ2 Script Parameters
 tribolium_image_utils.opsServiceImageUtilsLocal = ops
 tribolium_image_utils.dsServiceImageUtilsLocal = ds
 tribolium_image_utils.convertServiceImageUtilsLocal = convert
-
+tribolium_GPU_deconv_content_based_fusion.ops = ops
+# FIXME:
+# - Something is wrong with 16-bit and 32-bit conversions when fusing on CLIJx
 # TODO: 
 # - Write current limitations and implicit assumptions in the documentation
 # - test 2 channel case
@@ -87,6 +89,7 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 	# [ERROR] Traceback (most recent call last):
 	#   File "tribolium_processing/Tribolium_Processing.py", line 1741, in <module>
 	# java.lang.IllegalArgumentException: java.lang.IllegalArgumentException: Row out of range
+# - Add copy of raw cropped stacks to save.	
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -179,7 +182,12 @@ opsServiceImageUtilsLocal = opsServiceImageUtilsLocal
 dsServiceImageUtilsLocal = dsServiceImageUtilsLocal
 convertServiceImageUtilsLocal = convertServiceImageUtilsLocal
 
+ops = ops
+ds = ds
+convert = convert
+
 USE_CROPPED_CACHE = use_cropped_cache
+USE_FUSION_DATASET_CACHE = use_fusion_dataset_cache
 DO_HISTOGRAM_MATCHING = do_histogram_matching
 PERCENT_OVEREXPOSED_PIXELS = PERCENT_OVEREXPOSED_PIXELS
 COMPRESS_ON_SAVE = compress_on_save
@@ -1597,24 +1605,29 @@ def fusion_branch_processing(dataset_metadata_obj):
 											raw_direction_dirs[0], 
 											dataset_metadata_obj.tp_fuse_start, 
 											dataset_metadata_obj.tp_fuse_end)
-		print("Creating dataset for fusion with selected timepoints: %s-%s" % (selected_timepoints[0], selected_timepoints[-1]))
-		logging.info("Creating dataset for fusion with selected timepoints: %s-%s" % (selected_timepoints[0], selected_timepoints[-1]))
-		create_and_register_full_dataset(fusion_setup_folder, 
-										pre_fusion_dataset_basename, 
-										full_dataset_file_pattern, 
-										selected_timepoints,
-										(1, dataset_metadata_obj.number_of_directions),
-										(IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z),
-										reference_timepoint=reference_timepoint)
+		
 		dataset_xml_path = os.path.join(fusion_setup_folder, pre_fusion_dataset_basename + ".xml")
-		apply_transformation_bigstitcher_dataset(dataset_xml_path, upscaled_translation_embryo_to_center)
-		rotate_bigstitcher_dataset(dataset_xml_path, "z", segmentation_results.rotation_angle_z)
-		rotate_bigstitcher_dataset(dataset_xml_path, "y", segmentation_results.rotation_angle_y)
-		if dataset_metadata_obj.embryo_head_direction == "right":
-			rotate_bigstitcher_dataset(dataset_xml_path, "z", -90)
-		if dataset_metadata_obj.embryo_head_direction == "left":
-			rotate_bigstitcher_dataset(dataset_xml_path, "z", 90)
-		define_bounding_box_for_fusion(dataset_xml_path, upscaled_vertical_box, "embryo_cropped")
+		is_bounding_box_present = get_bounding_box_coords_from_xml(dataset_xml_path, "embryo_cropped") is not None
+		
+		if USE_FUSION_DATASET_CACHE and is_bounding_box_present:
+			logging_broadcast("Found previously created dataset with 'embryo_cropped' crop box. Skipping dataset creation and registration.")
+		else:
+			logging_broadcast("Creating dataset for fusion with selected timepoints: %s-%s" % (selected_timepoints[0], selected_timepoints[-1]))
+			create_and_register_full_dataset(fusion_setup_folder, 
+											pre_fusion_dataset_basename, 
+											full_dataset_file_pattern, 
+											selected_timepoints,
+											(1, dataset_metadata_obj.number_of_directions),
+											(IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z),
+											reference_timepoint=reference_timepoint)
+			apply_transformation_bigstitcher_dataset(dataset_xml_path, upscaled_translation_embryo_to_center)
+			rotate_bigstitcher_dataset(dataset_xml_path, "z", segmentation_results.rotation_angle_z)
+			rotate_bigstitcher_dataset(dataset_xml_path, "y", segmentation_results.rotation_angle_y)
+			if dataset_metadata_obj.embryo_head_direction == "right":
+				rotate_bigstitcher_dataset(dataset_xml_path, "z", -90)
+			if dataset_metadata_obj.embryo_head_direction == "left":
+				rotate_bigstitcher_dataset(dataset_xml_path, "z", 90)
+			define_bounding_box_for_fusion(dataset_xml_path, upscaled_vertical_box, "embryo_cropped")
 
 
 		print("Starting Fusion or Deconvolution")
@@ -1636,29 +1649,40 @@ def fusion_branch_processing(dataset_metadata_obj):
 										os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"),
 										NUM_DECONV_ITERATIONS)
 		if FUSE_CLIJ_GPU:
-			logging_broadcast("Extracting PSF from reference timepoint %s and assigning it to all." % reference_timepoint)
-			extract_psf(dataset_xml_path, reference_timepoint)
-			assign_psf(dataset_xml_path, reference_timepoint)
+			if USE_FUSION_DATASET_CACHE and os.path.exists(os.path.join(fusion_setup_folder, "psf")):
+				logging_broadcast("Found 'psf' folder inside dataset setup folder. Skipping PSF extraction and asignment.")
+			else:	
+				logging_broadcast("Extracting PSF from reference timepoint %s and assigning it to all." % reference_timepoint)
+				extract_psf(dataset_xml_path, reference_timepoint)
+				assign_psf(dataset_xml_path, reference_timepoint)
 			temp_dir_fusion = os.path.join(CACHING_DIR, uuid.uuid4().hex)
 			mkpath(temp_dir_fusion)
 			logging_broadcast("Starting deconvolution->content-based fusion on the GPU ")
 			for tp in selected_timepoints:
-				if tp > 23:
-					break
+				fused_save_path =  os.path.join(fusion_output_dir, "deconv_weighted_fused_tp_%s.tiff" % tp)
 				logging_broadcast("Fusing timepoint %s" % tp)
+				if os.path.exists(fused_save_path):
+					logging_broadcast("Found previously fused timepoint, skipping.")
+					continue
 
 				transformed_psf_dir = os.path.join(fusion_output_dir, "transformed_psf")
 				if not os.path.exists(transformed_psf_dir):
 					mkpath(transformed_psf_dir)
+				if tp == 1: time.sleep(20) ############### Remove this!!! ###############################################################
 				psf_paths = save_transformed_psfs(dataset_xml_path, transformed_psf_dir, tp, dataset_metadata_obj.number_of_directions)
 
 				raw_transformed_paths = save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, tp, dataset_metadata_obj.number_of_directions)
 
 				print("Starting deconvolution->fusion of the timepoint with params", raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS)
-				deconv_fused_image = deconvolve_fuse_timepoint_multiview_entropy_weighted(raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS)
-				IJ.run(deconv_fused_image, "16-bit", "")
-				save_tiff(deconv_fused_image, os.path.join(fusion_output_dir, "deconvolution_fusion_CLIJ"))
-				shutil.rmtree(temp_dir_fusion)
+				raw_transformed_views = [IJ.openImage(path) for path in raw_transformed_paths]
+				transformed_psfs = [IJ.openImage(path) for path in psf_paths]
+				deconv_fused_image = tribolium_GPU_deconv_content_based_fusion.deconvolve_fuse_timepoint_multiview_entropy_weighted(raw_transformed_views, transformed_psfs, NUM_DECONV_ITERATIONS)
+				deconv_fused_image = ds.create(ops.run("convert.uint16", deconv_fused_image))
+				fused_imp = convert.convert(deconv_fused_image, ImagePlus)
+
+
+				save_tiff(fused_imp,fused_save_path)
+				# shutil.rmtree(temp_dir_fusion) ## Change this! ##########################################
 
 	return True
 
