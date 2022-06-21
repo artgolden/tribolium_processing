@@ -1,11 +1,20 @@
 import logging
+import os
 import xml.etree.ElementTree as ET
 
 
 
-from ij import IJ
+from ij import IJ, WindowManager
+from ij.io import FileSaver
 
 
+# small Utils
+
+def save_tiff_simple(image, path):
+	if os.path.exists(path):
+		os.remove(path)
+	fs = FileSaver(image)
+	fs.saveAsTiff(path)
 
 
 ###### Bigstitcher 
@@ -127,3 +136,27 @@ def deconvolve_dataset_to_tiff(dataset_xml_path,
 	IJ.run("Deconvolve", deconv_run_string)
 
 
+def get_transformed_PSF_from_bigstitcher_dataset(dataset_xml_path, timepoint, view):
+    IJ.run("View PSFs", "select=%s process_angle=[Single angle (Select from List)] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_angle=[angle %s] processing_timepoint=[Timepoint %s] display=[Averaged transformed PSF]" % (dataset_xml_path, view, timepoint))
+    psf = WindowManager.getImage("Averaged transformed PSF")
+    psf.hide()
+    return psf
+
+
+def save_transformed_psfs(dataset_xml_path, transformed_psf_dir, timepoint, num_angles):
+	psf_paths = []
+	for angle in range(num_angles):
+		psf = get_transformed_PSF_from_bigstitcher_dataset(dataset_xml_path, timepoint, angle + 1)
+		save_path = os.path.join(transformed_psf_dir, "transformed_psf_tp_%s_angle_%s.tiff" % (timepoint, angle))
+		psf_paths.append(save_path)
+		save_tiff_simple(psf, save_path)
+	return psf_paths
+
+
+def save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, timepoint, num_angles):
+	xml_path = os.path.join(temp_dir_fusion, "raw_registered_cropped.xml")
+	# IJ.run("Fuse dataset ...", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_timepoint=[Timepoint %s] bounding_box=embryo_cropped downsampling=1 pixel_type=[32-bit floating point] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each view] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, timepoint, xml_path))
+	IJ.run("Fuse dataset ...", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_timepoint=[Timepoint %s] bounding_box=embryo_cropped downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] produce=[Each view] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, timepoint, xml_path))
+
+	raw_transformed_paths = [os.path.join(temp_dir_fusion, "fused_tp_%s_vs_%s.tif" % (timepoint, angle)) for angle in range(num_angles)]
+	return raw_transformed_paths

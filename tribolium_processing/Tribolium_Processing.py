@@ -12,7 +12,8 @@
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
 # @ Boolean (label='Run fusion-branch only up to downsampled preview', value=true) run_fusion_up_to_downsampled_preview
 # @ Boolean (label='Run fusion-branch only up to start of deconvolution', value=False) run_fusion_up_to_start_of_deconvolution
-# @ String (choices={"Only Fuse full dataset", "Content-based fusion", "Fuse+Deconvolve"}, style="radioButtonHorizontal", value="Fuse+Deconvolve") Only_fuse_or_deconvolve
+# @ String (choices={"Only Fuse full dataset (BigStitcher)", "Content-based fusion (BigStitcher)", "Fuse+Deconvolve (BigStitcher)", "Deconvolve->Fuse content-based (CLIJx GPU)"}, style="listBox", value="Fuse+Deconvolve") Only_fuse_or_deconvolve
+# @ File(label='Choose a cache directory (preferably on an SSD or Ramdisk, otherwise you get no benefits.) (optional param.)', style='directory', required=false) caching_dir
 # @ String (label='Thresholding for embryo segmentation', choices={"triangle", "minerror", "mean", "huang2"}, style="radioButtonHorizontal", value="triangle") segmentation_threshold_type
 # @ Float (label='Pixel distance X axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_x
 # @ Float (label='Pixel distance Y axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_y
@@ -34,9 +35,11 @@ import fnmatch
 import json
 import logging
 from datetime import datetime
+import shutil
 from time import time
 import traceback
 import sys
+import uuid
 
 from java.lang.System import getProperty
 from java.io import File
@@ -59,6 +62,7 @@ from tribolium_bigstitcher_utils import *
 from tribolium_image_utils import *
 from tribolium_math_utils import *
 from tribolium_file_utils import *
+from tribolium_GPU_deconv_content_based_fusion import *
 import tribolium_image_utils
 
 # A very clunky way of importing services for image_utils module. I could find a way to import them directly there, so I have to set the ones that I get from ImageJ2 Script Parameters
@@ -76,6 +80,13 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - Integrate CLIJ2 deconvolution + content based fusion
 # - Write install documentation
 # - Handle exception when embryo could not be segmented
+# - Generate max time projections uncropped before trying to find the cropbox, so you have projection to define the manual cropbox on
+# - Check whether B-branch uses max projections stack cache
+# - Convert timepoints for fusion range specification to "free style" string in JSON
+# - Handle B-branch exception when embryo could not be segmented:
+	# [ERROR] Traceback (most recent call last):
+	#   File "tribolium_processing/Tribolium_Processing.py", line 1741, in <module>
+	# java.lang.IllegalArgumentException: java.lang.IllegalArgumentException: Row out of range
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -93,7 +104,7 @@ Example JSON metadata file contents:
 			},
 			"head_direction": "right",
 			"use_manual_bounding_box": false,
-			"timepoints_to_fuse": [1,100]
+			"timepoints_range_to_fuse": [1,100]
 		},
 		{
 			"ID": 3,
@@ -176,10 +187,14 @@ DO_B_BRANCH = do_b_branch
 DO_FUSION_BRANCH = do_fusion_branch
 RUN_FUSION_UP_TO_DOWNSAMPLED_PREVIEW = run_fusion_up_to_downsampled_preview
 RUN_FUSION_UP_TO_START_OF_DECONV = run_fusion_up_to_start_of_deconvolution
+CACHING_DIR = os.path.join(datasets_dir.getAbsolutePath(), "tmp")
+if not caching_dir is None: 
+	CACHING_DIR = caching_dir.getAbsolutePath()
 IMAGE_DOWNSAMPLING_FACTOR_XY = image_downsampling_factor = 4
 ONLY_FUSE_FULL = False
 FUSE_AND_DECONVOLVE_FULL = False
 FUSE_CONTENT_BASED = False
+FUSE_CLIJ_GPU = False
 SEGMENTATION_THRESHOLD_TYPE = segmentation_threshold_type
 
 IMAGE_PIXEL_DISTANCE_X = pixel_distance_x
@@ -188,12 +203,14 @@ IMAGE_PIXEL_DISTANCE_Z = pixel_distance_z
 
 NUM_DECONV_ITERATIONS = num_deconv_iterations
 
-if Only_fuse_or_deconvolve == "Only Fuse full dataset":
+if Only_fuse_or_deconvolve == "Only Fuse full dataset (BigStitcher)":
 	ONLY_FUSE_FULL = True
-if Only_fuse_or_deconvolve == "Content-based fusion":
+if Only_fuse_or_deconvolve == "Content-based fusion (BigStitcher)":
 	FUSE_CONTENT_BASED = True
-if Only_fuse_or_deconvolve == "Fuse+Deconvolve":
+if Only_fuse_or_deconvolve == "Fuse+Deconvolve (BigStitcher)":
 	FUSE_AND_DECONVOLVE_FULL = True
+if Only_fuse_or_deconvolve == "Deconvolve->Fuse content-based (CLIJx GPU)":
+	FUSE_CLIJ_GPU = True
 
 CANVAS_SIZE_FOR_EMBRYO_PREVIEW = 1400 / IMAGE_DOWNSAMPLING_FACTOR_XY
 
@@ -257,9 +274,9 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 	
 	tp_fuse_start = 1
 	tp_fuse_end = -1
-	if "timepoints_to_fuse" in metadata_dict.keys():
-		tp_fuse_start = metadata_dict["timepoints_to_fuse"][0]
-		tp_fuse_end = metadata_dict["timepoints_to_fuse"][1]
+	if "timepoints_range_to_fuse" in metadata_dict.keys():
+		tp_fuse_start = metadata_dict["timepoints_range_to_fuse"][0]
+		tp_fuse_end = metadata_dict["timepoints_range_to_fuse"][1]
 
 	return DatasetMetadata(
 							id=metadata_dict["ID"], 
@@ -274,6 +291,15 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 		
 SegmentationResults = namedtuple("SegmentationResults", ["transformation_embryo_to_center", "rotation_angle_z", "rotation_angle_y", "embryo_crop_box"])
 
+
+# 						Generic functions
+
+def parse_range_string(astr):
+    result = set()
+    for part in astr.split(','):
+        x = part.split('-')
+        result.update(range(int(x[0]), int(x[-1]) + 1))
+    return sorted(result)
 
 #						B-branch functions
 
@@ -1017,7 +1043,7 @@ def is_specimen_input_valid(specimens_per_direction):
 			return False
 	return True
 
-def is_timepoints_to_fuse_valid(tp_range):
+def is_timepoints_range_to_fuse_valid(tp_range):
 	start = tp_range[0]
 	end = tp_range[1]
 	if not isinstance(start, int) or not isinstance(end, int):
@@ -1065,8 +1091,8 @@ def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 				dataset["head_direction"], dataset_id))
 			print(EXAMPLE_JSON_METADATA_FILE)
 			exit(1)
-		if "timepoints_to_fuse" in dataset.keys() and not is_timepoints_to_fuse_valid(dataset["timepoints_to_fuse"]):
-			print("Error while parsing .json file: not valid timepoints_to_fuse \"%s\" for the dataset with ID: \"%s\". Exiting." % (
+		if "timepoints_range_to_fuse" in dataset.keys() and not is_timepoints_range_to_fuse_valid(dataset["timepoints_range_to_fuse"]):
+			print("Error while parsing .json file: not valid timepoints_range_to_fuse \"%s\" for the dataset with ID: \"%s\". Exiting." % (
 				dataset["head_direction"], dataset_id))
 			print(EXAMPLE_JSON_METADATA_FILE)
 			exit(1)
@@ -1466,6 +1492,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 	example_raw_filename = get_any_tiff_name_from_dir(raw_direction_dirs[0])
 	reference_timepoint = dataset_metadata_obj.tp_fuse_start
 
+
 	downsampled_dir = os.path.join(dataset_metadata_obj.root_dir, "downsampled_%s_timepoint" % reference_timepoint)
 	if not os.path.exists(downsampled_dir):
 		mkpath(downsampled_dir)
@@ -1595,8 +1622,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 		if not os.path.exists(fusion_output_dir):
 			mkpath(fusion_output_dir)
 		if RUN_FUSION_UP_TO_START_OF_DECONV:
-			logging.info("Specified to run only up to the start of deconvolution. Done fusion branch.")
-			print("Specified to run only up to the start of deconvolution. Done fusion branch.")
+			logging_broadcast("Specified to run only up to the start of deconvolution. Done fusion branch.")
 			return True
 		if ONLY_FUSE_FULL:
 			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"))
@@ -1609,6 +1635,31 @@ def fusion_branch_processing(dataset_metadata_obj):
 										"embryo_cropped",
 										os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"),
 										NUM_DECONV_ITERATIONS)
+		if FUSE_CLIJ_GPU:
+			logging_broadcast("Extracting PSF from reference timepoint %s and assigning it to all." % reference_timepoint)
+			extract_psf(dataset_xml_path, reference_timepoint)
+			assign_psf(dataset_xml_path, reference_timepoint)
+			temp_dir_fusion = os.path.join(CACHING_DIR, uuid.uuid4().hex)
+			mkpath(temp_dir_fusion)
+			logging_broadcast("Starting deconvolution->content-based fusion on the GPU ")
+			for tp in selected_timepoints:
+				if tp > 23:
+					break
+				logging_broadcast("Fusing timepoint %s" % tp)
+
+				transformed_psf_dir = os.path.join(fusion_output_dir, "transformed_psf")
+				if not os.path.exists(transformed_psf_dir):
+					mkpath(transformed_psf_dir)
+				psf_paths = save_transformed_psfs(dataset_xml_path, transformed_psf_dir, tp, dataset_metadata_obj.number_of_directions)
+
+				raw_transformed_paths = save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, tp, dataset_metadata_obj.number_of_directions)
+
+				print("Starting deconvolution->fusion of the timepoint with params", raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS)
+				deconv_fused_image = deconvolve_fuse_timepoint_multiview_entropy_weighted(raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS)
+				IJ.run(deconv_fused_image, "16-bit", "")
+				save_tiff(deconv_fused_image, os.path.join(fusion_output_dir, "deconvolution_fusion_CLIJ"))
+				shutil.rmtree(temp_dir_fusion)
+
 	return True
 
 def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
@@ -1643,6 +1694,9 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					 level=logging.INFO)
 
 	metadata_file_check_for_errors(datasets_meta=datasets_meta, datasets_dir=datasets_dir)
+	if not os.path.exists(CACHING_DIR) and CACHING_DIR != None:
+		logging_broadcast("Could not find cache directory specified. Exiting. Directory provided: %s" % CACHING_DIR)
+		exit(1)
 
 
 
