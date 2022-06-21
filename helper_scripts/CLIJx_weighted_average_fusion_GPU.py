@@ -7,7 +7,6 @@
 # TODO: 
 # - Check where 32-bit conversion is not needed
 # - find CLIJ conversion to float
-# - load individual views lazily
 
 import timeit
 from ij import IJ
@@ -38,7 +37,7 @@ for imp in views:
 
 n_views = len(views)
 
-downsampling_factor = 4
+downsampling_factor_xy = 4
 num_iterations = 8
 
 start_time = timeit.default_timer()
@@ -46,48 +45,46 @@ start_time = timeit.default_timer()
 # init GPU
 clijx = CLIJx.getInstance()
 
-views_gpu = [clijx.convert(view, ClearCLBuffer) for view in views]
+# views_gpu = [clijx.convert(view, ClearCLBuffer) for view in views]
+avg_weighted_image = clijx.convert(views[0], ClearCLBuffer)
+clijx.set(avg_weighted_image, 0)
 transformed_psfs_gpu = [clijx.convert(psf, ClearCLBuffer) for psf in transformed_psfs]
-buffer1 = clijx.create(views_gpu[0])
-buffer2 = clijx.create(views_gpu[0])
-avg_weights = clijx.create(views_gpu[0])
+buffer1 = clijx.create(avg_weighted_image)
+buffer2 = clijx.create(avg_weighted_image)
+avg_weights = clijx.create(avg_weighted_image)
 
-for i, view, psf in zip(range(n_views), views_gpu, transformed_psfs_gpu):
-    print("Deconvolving %s view" % i)
-    DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, view, psf, buffer1, num_iterations, 0.0, False)
-    clijx.copy(buffer1, view)
+
 
 
 def compute_entropy_weight(view, output, sigma1=20, sigma2=40):
-    clijx.gaussianBlur3D(view, buffer1, sigma1 / downsampling_factor, sigma1 / downsampling_factor, sigma1 / 2)
+    clijx.gaussianBlur3D(view, buffer1, sigma1 / downsampling_factor_xy, sigma1 / downsampling_factor_xy, sigma1 / 2)
     clijx.addImagesWeighted(view, buffer1, buffer2, 1, -1)
     # clijx.convertFloat(buffer2, buffer1) # Is this needed? (the method does not exist :( ))
     clijx.multiplyImages(buffer2, buffer2, buffer1)
-    clijx.gaussianBlur3D(buffer1, output, sigma2 / downsampling_factor, sigma2 / downsampling_factor, sigma2 / 2)
+    clijx.gaussianBlur3D(buffer1, output, sigma2 / downsampling_factor_xy, sigma2 / downsampling_factor_xy, sigma2 / 2)
 
 # Weight views
-for view in views_gpu:
+for i, psf in zip(range(n_views), transformed_psfs_gpu):
+    print("Deconvolving %s view" % i)
+    view = clijx.convert(views[i], ClearCLBuffer)
+    DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, view, psf, buffer1, num_iterations, 0.0, False)
+    clijx.copy(buffer1, view)
     weight = buffer2
     compute_entropy_weight(view, weight)
     clijx.multiplyImages(view, weight, buffer1)
 
     # divide view for averaging
-    clijx.multiplyImageAndScalar(buffer1, view, 1.0 / n_views)
+    clijx.addImagesWeighted(buffer1, avg_weighted_image, view, 1.0 / n_views, 1)
+    clijx.copy(view, avg_weighted_image)
 
     clijx.addImagesWeighted(weight, avg_weights, buffer1, 1.0 / n_views, 1)
     clijx.copy(buffer1, avg_weights)
+    clijx.release(view)
 
-# add divided weighted images to average
-avg_weighted_img = buffer1
-clijx.addImages(views_gpu[0], views_gpu[1], avg_weighted_img)
-for i in range(2, n_views):
-    clijx.addImages(views_gpu[i], avg_weighted_img, buffer2)
-    clijx.copy(buffer2, avg_weighted_img)
 
 # Normalize by average weights
 output = buffer2
-buffer4 = views_gpu[0]
-clijx.divideImages(avg_weighted_img, avg_weights, output)
+clijx.divideImages(avg_weighted_image, avg_weights, output)
 
 
 
