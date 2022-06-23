@@ -6,22 +6,28 @@ from net.haesleinhuepf.clijx.plugins import DeconvolveRichardsonLucyFFT
 
 ops = None
 
-def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs, num_iterations=8, sigma_scaling_factor_xy=1, sigma_scaling_factor_z=0.5):
+def deconvolve_fuse_timepoint_multiview_entropy_weighted(views_paths, transformed_psfs_paths, num_iterations=8, sigma_scaling_factor_xy=1, sigma_scaling_factor_z=0.5):
     """Do deconvolution on individual views, then fuse them adjusting for entropy
 
     Args:
-        views (ImagePlus[]): 32-bit list of registered(transformed to be aligned) image stacks (16-bit will be converted automatically), ready for fusion
-        transformed_psfs (ImagePlus[]): 32-bit transformed PSF for each view according to each view's registration affine transformation
+        views (str[]): paths to a list of registered(transformed to be aligned) image stacks, ready for fusion.
+        transformed_psfs (str[]): paths to transformed PSF for each view according to each view's registration affine transformation
         num_iterations (int, optional): number of deconvolution iterations. Defaults to 8.
         sigma_scaling_factor_xy (int, optional): scaling factor of X and Y axis, used to calculate sigmas for quick entropy calculation. Defaults to 4.
         sigma_scaling_factor_z (int, optional): scaling factor of Z axis, used to calculate sigmas for quick entropy calculation. Defaults to 2.
 
     Returns:
         ImagePlus: 32-bit fused image 
+
+    Images have to be provided as paths to files, because of the memory leak that is caused if you provide them as an list of images to this script, which is loaded as a separate module. See: https://forum.image.sc/t/jython-memory-leak-when-passing-image-list-to-another-module/68680?u=artgolden 
     """
+
+    views = [IJ.openImage(unicode(path)) for path in views_paths]
+    transformed_psfs = [IJ.openImage(unicode(path)) for path in transformed_psfs_paths]
     n_views = len(views)
-    for view in views:
-        ops.run("convert.uint16", view)
+    for i, view in enumerate(views):
+        view_converted = ops.run("convert.float32", view)
+        views[i] = view_converted
 
     start_time = timeit.default_timer()
 

@@ -6,7 +6,7 @@
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
 # @ Boolean (label='Compress images?', value=true) compress_on_save
 # @ Boolean (label='B-branch: Use previously cropped stacks (if present)?', value=false) use_cropped_cache
-# @ Boolean (label='Fusion-branch: Use previously created dataset (if present)?', value=false) use_fusion_dataset_cache
+# @ Boolean (label='Fusion-branch: Use previously created dataset (works only if everything up to fusion start is done)?', value=false) use_fusion_dataset_cache
 # @ Boolean (label='Do B-branch processing?', value=false) do_b_branch
 # @ Boolean (label='Do Fusion-branch processing?', value=false) do_fusion_branch
 # @ Boolean (label='Do histogram matching adjustment?', value=true) do_histogram_matching
@@ -42,6 +42,7 @@ import sys
 import uuid
 
 from java.lang.System import getProperty
+from java.lang import Runtime
 from java.io import File
 
 from ij.io import FileSaver
@@ -63,13 +64,11 @@ from tribolium_image_utils import *
 from tribolium_math_utils import *
 from tribolium_file_utils import *
 import tribolium_image_utils
-import tribolium_GPU_deconv_content_based_fusion
 
 # A very clunky way of importing services for image_utils module. I could find a way to import them directly there, so I have to set the ones that I get from ImageJ2 Script Parameters
 tribolium_image_utils.opsServiceImageUtilsLocal = ops
 tribolium_image_utils.dsServiceImageUtilsLocal = ds
 tribolium_image_utils.convertServiceImageUtilsLocal = convert
-tribolium_GPU_deconv_content_based_fusion.ops = ops
 # FIXME:
 # - Something is wrong with 16-bit and 32-bit conversions when fusing on CLIJx
 # TODO: 
@@ -90,6 +89,8 @@ tribolium_GPU_deconv_content_based_fusion.ops = ops
 	#   File "tribolium_processing/Tribolium_Processing.py", line 1741, in <module>
 	# java.lang.IllegalArgumentException: java.lang.IllegalArgumentException: Row out of range
 # - Add copy of raw cropped stacks to save.	
+# - Do more proper checking of the already made PSFs for fusion, need to check that all have been assigned
+# - Add a lot more logging to fusion branch. log all bigstitcher commands?
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -194,8 +195,10 @@ COMPRESS_ON_SAVE = compress_on_save
 DO_B_BRANCH = do_b_branch
 DO_FUSION_BRANCH = do_fusion_branch
 RUN_FUSION_UP_TO_DOWNSAMPLED_PREVIEW = run_fusion_up_to_downsampled_preview
-RUN_FUSION_UP_TO_START_OF_DECONV = run_fusion_up_to_start_of_deconvolution
+RUN_FUSION_BRANCH_UP_TO_START_OF_FUSION = run_fusion_up_to_start_of_deconvolution
 CACHING_DIR = os.path.join(datasets_dir.getAbsolutePath(), "tmp")
+if not os.path.exists(CACHING_DIR):
+	mkpath(CACHING_DIR)
 if not caching_dir is None: 
 	CACHING_DIR = caching_dir.getAbsolutePath()
 IMAGE_DOWNSAMPLING_FACTOR_XY = image_downsampling_factor = 4
@@ -219,6 +222,8 @@ if Only_fuse_or_deconvolve == "Fuse+Deconvolve (BigStitcher)":
 	FUSE_AND_DECONVOLVE_FULL = True
 if Only_fuse_or_deconvolve == "Deconvolve->Fuse content-based (CLIJx GPU)":
 	FUSE_CLIJ_GPU = True
+	import tribolium_GPU_deconv_content_based_fusion
+	tribolium_GPU_deconv_content_based_fusion.ops = ops
 
 CANVAS_SIZE_FOR_EMBRYO_PREVIEW = 1400 / IMAGE_DOWNSAMPLING_FACTOR_XY
 
@@ -303,11 +308,15 @@ SegmentationResults = namedtuple("SegmentationResults", ["transformation_embryo_
 # 						Generic functions
 
 def parse_range_string(astr):
-    result = set()
-    for part in astr.split(','):
-        x = part.split('-')
-        result.update(range(int(x[0]), int(x[-1]) + 1))
-    return sorted(result)
+	result = set()
+	for part in astr.split(','):
+		x = part.split('-')
+		result.update(range(int(x[0]), int(x[-1]) + 1))
+	return sorted(result)
+
+def get_free_memory_in_GB():
+	free_mem = round(float(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024 / 1024 / 1024, 3)
+	return free_mem
 
 #						B-branch functions
 
@@ -1513,7 +1522,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 	view_image_filename.time_point = "%04d" % reference_timepoint
 
 	# Downsample reference timepoint to a new folder
-	logging.info("Downsampling images for fusion+segmentation")
+	logging_broadcast("Downsampling images for fusion+segmentation")
 	for direction, direction_dir in zip(range(1, dataset_metadata_obj.number_of_directions + 1), raw_direction_dirs):
 		view_image_filename.direction = "%04d" % (direction + 1)
 		next_downsampled_image_path = os.path.join(downsampled_dir, view_image_filename.get_name())
@@ -1523,7 +1532,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 
 		if os.path.exists(downsampled_image_path) and os.path.exists(next_downsampled_image_path): 
 			# We cannot guarantee that last downsampled file was finished if the pipeline crashed previously, so always redo it
-			logging.info("Found existing file %s, skipping downsampling." % downsampled_image_path)
+			logging_broadcast("Found existing file %s, skipping downsampling." % downsampled_image_path)
 			continue
 
 		full_image_path = os.path.join(direction_dir, view_image_filename.get_name())
@@ -1536,7 +1545,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 	view_dims = get_image_dimensions_from_file(os.path.join(downsampled_dir, view_image_filename.get_name()))
 	fuse_file_pattern = view_image_filename
 	fuse_file_pattern.direction = "{aaaa}"
-	logging.info("DS%04d Fusing downsampled %s timepoint as reference" % (dataset_metadata_obj.id, reference_timepoint))
+	logging_broadcast("DS%04d Fusing downsampled %s timepoint as reference" % (dataset_metadata_obj.id, reference_timepoint))
 	if not DEBUG_USE_FUSED_PREVIEW_CACHE:
 		create_and_fuse_preview_dataset(downsampled_dir, fuse_file_pattern.get_name(), (1, dataset_metadata_obj.number_of_directions), view_dims)
 
@@ -1546,6 +1555,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 	z_projection = tribolium_image_utils.project_image(fused_stack, "Z", "Max")
 	y_projection = tribolium_image_utils.project_image(fused_stack, "Y", "Max")
 
+	logging_broadcast("Segmenting downsampled and fusing cropped embryo")
 	zy_cropped_projections, segmentation_results = segment_embryo_and_fuse_again_cropping_around_embryo(
 														raw_dataset_xml_path=os.path.join(downsampled_dir, "dataset.xml"),
 														fused_xml_path=os.path.join(downsampled_dir, "fused.xml"),
@@ -1554,8 +1564,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 	
 	# Save ZY cropped projection montages
 	if zy_cropped_projections == False:
-		print("segment_embryo_and_fuse_again_cropping_around_embryo Failed. Exiting Fusion-branch.")
-		logging.info("segment_embryo_and_fuse_again_cropping_around_embryo Failed. Exiting Fusion-branch.")
+		logging_broadcast("segment_embryo_and_fuse_again_cropping_around_embryo Failed. Exiting Fusion-branch.")
 		return False
 	IJ.setBackgroundColor(255, 255, 255)
 	IJ.run(zy_cropped_projections, "Canvas Size...", "width=%s height=%s position=Center" % (CANVAS_SIZE_FOR_EMBRYO_PREVIEW, CANVAS_SIZE_FOR_EMBRYO_PREVIEW))
@@ -1567,8 +1576,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 	save_tiff(zy_cropped_projections, zy_projections_meta_path)
 
 	if RUN_FUSION_UP_TO_DOWNSAMPLED_PREVIEW:
-		print("Fusion-branch was specified to run only until preview. Continuing.")
-		logging.info("Fusion-branch was specified to run only until preview. Continuing.")
+		logging_broadcast("Fusion-branch was specified to run only until preview. Continuing.")
 		return True
 
 	###### Fusion and deconvolution full dataset
@@ -1634,7 +1642,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 		fusion_output_dir = os.path.join(dataset_metadata_obj.root_dir, FUSED_DIR_NAME, "CH%04d" % ch)
 		if not os.path.exists(fusion_output_dir):
 			mkpath(fusion_output_dir)
-		if RUN_FUSION_UP_TO_START_OF_DECONV:
+		if RUN_FUSION_BRANCH_UP_TO_START_OF_FUSION:
 			logging_broadcast("Specified to run only up to the start of deconvolution. Done fusion branch.")
 			return True
 		if ONLY_FUSE_FULL:
@@ -1655,9 +1663,14 @@ def fusion_branch_processing(dataset_metadata_obj):
 				logging_broadcast("Extracting PSF from reference timepoint %s and assigning it to all." % reference_timepoint)
 				extract_psf(dataset_xml_path, reference_timepoint)
 				assign_psf(dataset_xml_path, reference_timepoint)
-			temp_dir_fusion = os.path.join(CACHING_DIR, uuid.uuid4().hex)
-			mkpath(temp_dir_fusion)
+			# temp_dir_fusion = os.path.join(CACHING_DIR, uuid.uuid4().hex)
+			# mkpath(temp_dir_fusion)
+			temp_dir_fusion = os.path.join(CACHING_DIR, "testing_fusion_cache_dir") #  uuid.uuid4().hex # CHANGE BACK!!!! #####################################
+			logging_broadcast("USING DEBUGGING CACHING DIR !!!")
+#			mkpath(temp_dir_fusion)
 			logging_broadcast("Starting deconvolution->content-based fusion on the GPU ")
+			initial_mem_usage = get_free_memory_in_GB()
+			used_mem_last_iter = initial_mem_usage
 			for tp in selected_timepoints:
 				fused_save_path =  os.path.join(fusion_output_dir, "deconv_weighted_fused_tp_%s.tiff" % tp)
 				logging_broadcast("Fusing timepoint %s" % tp)
@@ -1668,21 +1681,27 @@ def fusion_branch_processing(dataset_metadata_obj):
 				transformed_psf_dir = os.path.join(fusion_output_dir, "transformed_psf")
 				if not os.path.exists(transformed_psf_dir):
 					mkpath(transformed_psf_dir)
-				if tp == 1: time.sleep(20) ############### Remove this!!! ###############################################################
+				logging_broadcast("Saving averaged transformed PSFs")
 				psf_paths = save_transformed_psfs(dataset_xml_path, transformed_psf_dir, tp, dataset_metadata_obj.number_of_directions)
 
+				logging_broadcast("Saving raw transformed stacks")
 				raw_transformed_paths = save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, tp, dataset_metadata_obj.number_of_directions)
 
-				print("Starting deconvolution->fusion of the timepoint with params", raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS)
-				raw_transformed_views = [IJ.openImage(path) for path in raw_transformed_paths]
-				transformed_psfs = [IJ.openImage(path) for path in psf_paths]
-				deconv_fused_image = tribolium_GPU_deconv_content_based_fusion.deconvolve_fuse_timepoint_multiview_entropy_weighted(raw_transformed_views, transformed_psfs, NUM_DECONV_ITERATIONS)
+				logging_broadcast("Starting deconvolution->fusion of the timepoint with params raw_transformed_paths: %s psf_paths: %s NUM_DECONV_ITERATIONS: %s" % (raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS))
+				# Images have to be provided as paths to files, because of the memory leak that is caused if you provide them as an list of images to this script, which is loaded as a separate module. 
+				# See: https://forum.image.sc/t/jython-memory-leak-when-passing-image-list-to-another-module/68680?u=artgolden
+				deconv_fused_image = tribolium_GPU_deconv_content_based_fusion.deconvolve_fuse_timepoint_multiview_entropy_weighted(raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS)
 				deconv_fused_image = ds.create(ops.run("convert.uint16", deconv_fused_image))
 				fused_imp = convert.convert(deconv_fused_image, ImagePlus)
 
 
 				save_tiff(fused_imp,fused_save_path)
 				# shutil.rmtree(temp_dir_fusion) ## Change this! ##########################################
+				used_mem = get_free_memory_in_GB()
+				logging_broadcast("Used memory growth per iteration: %s Gb" % (used_mem - used_mem_last_iter))
+				logging_broadcast("Used memory growth total: %s Gb" % (used_mem - initial_mem_usage))
+				logging_broadcast("Used memory total: %s Gb" % used_mem)
+				used_mem_last_iter = used_mem
 
 	return True
 
