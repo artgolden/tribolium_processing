@@ -40,6 +40,12 @@ import time
 import traceback
 import sys
 import uuid
+import timeit
+
+
+from net.haesleinhuepf.clijx import CLIJx
+from net.haesleinhuepf.clij.clearcl import ClearCLBuffer
+from net.haesleinhuepf.clijx.plugins import DeconvolveRichardsonLucyFFT
 
 from java.lang.System import getProperty
 from java.lang import Runtime
@@ -183,6 +189,8 @@ opsServiceImageUtilsLocal = opsServiceImageUtilsLocal
 dsServiceImageUtilsLocal = dsServiceImageUtilsLocal
 convertServiceImageUtilsLocal = convertServiceImageUtilsLocal
 
+# Reassigning Scripting parameters to get warnings about missing variables only here
+
 ops = ops
 ds = ds
 convert = convert
@@ -222,8 +230,6 @@ if Only_fuse_or_deconvolve == "Fuse+Deconvolve (BigStitcher)":
 	FUSE_AND_DECONVOLVE_FULL = True
 if Only_fuse_or_deconvolve == "Deconvolve->Fuse content-based (CLIJx GPU)":
 	FUSE_CLIJ_GPU = True
-	import tribolium_GPU_deconv_content_based_fusion
-	tribolium_GPU_deconv_content_based_fusion.ops = ops
 
 CANVAS_SIZE_FOR_EMBRYO_PREVIEW = 1400 / IMAGE_DOWNSAMPLING_FACTOR_XY
 
@@ -974,7 +980,84 @@ def link_all_files_from_directions_to_folder(directions_dirs_list, symlinked_fol
 					logging.info("ERROR: Could not determine Operating System type. Exiting.")
 					exit(1)
 
-# def move_images_to_one_folder(dir_path):
+
+def deconvolve_fuse_timepoint_multiview_entropy_weighted(views_paths, transformed_psfs_paths, num_iterations=8, sigma_scaling_factor_xy=1, sigma_scaling_factor_z=0.5):
+    """Do deconvolution on individual views, then fuse them adjusting for entropy
+
+    Args:
+        views (str[]): paths to a list of registered(transformed to be aligned) image stacks, ready for fusion.
+        transformed_psfs (str[]): paths to transformed PSF for each view according to each view's registration affine transformation
+        num_iterations (int, optional): number of deconvolution iterations. Defaults to 8.
+        sigma_scaling_factor_xy (int, optional): scaling factor of X and Y axis, used to calculate sigmas for quick entropy calculation. Defaults to 4.
+        sigma_scaling_factor_z (int, optional): scaling factor of Z axis, used to calculate sigmas for quick entropy calculation. Defaults to 2.
+
+    Returns:
+        ImagePlus: 32-bit fused image 
+
+    Images have to be provided as paths to files, because of the memory leak that is caused if you provide them as an list of images to this script, which is loaded as a separate module. See: https://forum.image.sc/t/jython-memory-leak-when-passing-image-list-to-another-module/68680?u=artgolden 
+    """
+
+    views = [IJ.openImage(unicode(path)) for path in views_paths]
+    transformed_psfs = [IJ.openImage(unicode(path)) for path in transformed_psfs_paths]
+    n_views = len(views)
+    for i, view in enumerate(views):
+        view_converted = ops.run("convert.float32", view)
+        views[i] = view_converted
+
+    start_time = timeit.default_timer()
+
+    # init GPU
+    clijx = CLIJx.getInstance()
+
+    avg_weighted_image = clijx.convert(views[0], ClearCLBuffer)
+    clijx.set(avg_weighted_image, 0)
+    transformed_psfs_gpu = [clijx.convert(psf, ClearCLBuffer) for psf in transformed_psfs]
+    buffer1 = clijx.create(avg_weighted_image)
+    buffer2 = clijx.create(avg_weighted_image)
+    avg_weights = clijx.create(avg_weighted_image)
+
+
+    def compute_entropy_weight(view, output, sigma1=20, sigma2=40):
+        clijx.gaussianBlur3D(view, buffer1, sigma1 * sigma_scaling_factor_xy, sigma1 * sigma_scaling_factor_xy, sigma1 * sigma_scaling_factor_z)
+        clijx.addImagesWeighted(view, buffer1, buffer2, 1, -1)
+        # clijx.convertFloat(buffer2, buffer1) # Is this needed? (the method does not exist :( ))
+        clijx.multiplyImages(buffer2, buffer2, buffer1)
+        clijx.gaussianBlur3D(buffer1, output, sigma2 * sigma_scaling_factor_xy, sigma2 * sigma_scaling_factor_xy, sigma2 * sigma_scaling_factor_z)
+
+    # Weight views
+    for i, psf in zip(range(n_views), transformed_psfs_gpu):
+        print("Deconvolving %s view" % i)
+        view = clijx.convert(views[i], ClearCLBuffer)
+        clijx.release(buffer2)
+        DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, view, psf, buffer1, num_iterations, 0.0, False)
+        clijx.copy(buffer1, view)
+        buffer2 = clijx.create(view)
+        weight = buffer2
+        compute_entropy_weight(view, weight)
+        clijx.multiplyImages(view, weight, buffer1)
+
+        # divide view for averaging
+        clijx.addImagesWeighted(buffer1, avg_weighted_image, view, 1.0 / n_views, 1)
+        clijx.copy(view, avg_weighted_image)
+
+        clijx.addImagesWeighted(weight, avg_weights, buffer1, 1.0 / n_views, 1)
+        clijx.copy(buffer1, avg_weights)
+        clijx.release(view)
+
+
+    # Normalize by average weights
+    output = buffer2
+    clijx.divideImages(avg_weighted_image, avg_weights, output)
+    
+
+    deconv_fused_image = clijx.pull(output)
+
+    print("Deconvolution+content-based fusion took: %s ms" % round((timeit.default_timer() - start_time) * 1000, 1))
+    print(clijx.reportMemory())
+    # clean up
+    clijx.clear()
+
+    return deconv_fused_image
 	
 
 def get_timepoint_list_from_folder(dir_path, tp_start, tp_end):
@@ -1126,8 +1209,9 @@ def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 def logging_broadcast(string):
 	print(string)
 	logging.info(string)
-#					Pipeline main process functions
 
+
+#					Pipeline main process functions
 
 def move_files(raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix):
 	"""Splits the embryo images by direction and puts in separate channel/direction folders. 
@@ -1663,15 +1747,20 @@ def fusion_branch_processing(dataset_metadata_obj):
 				logging_broadcast("Extracting PSF from reference timepoint %s and assigning it to all." % reference_timepoint)
 				extract_psf(dataset_xml_path, reference_timepoint)
 				assign_psf(dataset_xml_path, reference_timepoint)
-			# temp_dir_fusion = os.path.join(CACHING_DIR, uuid.uuid4().hex)
+
+			# temp_dir_fusion = os.path.join(CACHING_DIR, uuid.uuid4().hex) # CHANGE BACK!!!! #####################################
 			# mkpath(temp_dir_fusion)
-			temp_dir_fusion = os.path.join(CACHING_DIR, "testing_fusion_cache_dir") #  uuid.uuid4().hex # CHANGE BACK!!!! #####################################
+			temp_dir_fusion = os.path.join(CACHING_DIR, "testing_fusion_cache_dir_DS00" + str(dataset_metadata_obj.id) + "_" + os.path.basename(dataset_metadata_obj.datasets_dir)) #  uuid.uuid4().hex # CHANGE BACK!!!! #####################################
+			if not os.path.exists(temp_dir_fusion):
+				mkpath(temp_dir_fusion)	
+
 			logging_broadcast("USING DEBUGGING CACHING DIR !!!")
-#			mkpath(temp_dir_fusion)
 			logging_broadcast("Starting deconvolution->content-based fusion on the GPU ")
 			initial_mem_usage = get_free_memory_in_GB()
 			used_mem_last_iter = initial_mem_usage
 			for tp in selected_timepoints:
+				IJ.run("Collect Garbage", "")
+				logging_broadcast("Collected Garbage")
 				fused_save_path =  os.path.join(fusion_output_dir, "deconv_weighted_fused_tp_%s.tiff" % tp)
 				logging_broadcast("Fusing timepoint %s" % tp)
 				if os.path.exists(fused_save_path):
@@ -1690,7 +1779,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 				logging_broadcast("Starting deconvolution->fusion of the timepoint with params raw_transformed_paths: %s psf_paths: %s NUM_DECONV_ITERATIONS: %s" % (raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS))
 				# Images have to be provided as paths to files, because of the memory leak that is caused if you provide them as an list of images to this script, which is loaded as a separate module. 
 				# See: https://forum.image.sc/t/jython-memory-leak-when-passing-image-list-to-another-module/68680?u=artgolden
-				deconv_fused_image = tribolium_GPU_deconv_content_based_fusion.deconvolve_fuse_timepoint_multiview_entropy_weighted(raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS)
+				deconv_fused_image = deconvolve_fuse_timepoint_multiview_entropy_weighted(raw_transformed_paths, psf_paths, NUM_DECONV_ITERATIONS)
 				deconv_fused_image = ds.create(ops.run("convert.uint16", deconv_fused_image))
 				fused_imp = convert.convert(deconv_fused_image, ImagePlus)
 
