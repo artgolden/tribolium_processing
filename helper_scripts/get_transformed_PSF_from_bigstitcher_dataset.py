@@ -11,4 +11,4 @@ def get_transformed_PSF_from_bigstitcher_dataset(dataset_xml_path, timepoint, vi
 dataset_xml_path = "/media/tema/big_storage/work/goethe/fiji/test_dataset/DS0016_MEME6/downsampled_23_timepoint/dataset.xml"
 
 psf = get_transformed_PSF_from_bigstitcher_dataset(dataset_xml_path, 0, 2)
-psf.show()
+psf.show()  
