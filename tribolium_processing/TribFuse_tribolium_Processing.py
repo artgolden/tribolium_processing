@@ -74,8 +74,7 @@ import tribolium_image_utils
 tribolium_image_utils.opsServiceImageUtilsLocal = ops
 tribolium_image_utils.dsServiceImageUtilsLocal = ds
 tribolium_image_utils.convertServiceImageUtilsLocal = convert
-# FIXME:
-# - Something is wrong with 16-bit and 32-bit conversions when fusing on CLIJx
+
 # TODO: 
 # - Write current limitations and implicit assumptions in the documentation
 # - test 2 channel case
@@ -83,9 +82,8 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - make an option to load the PSF from a file
 # - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
 # this is very slow. Probably need to switch to some other way of manually defining min/max.
-# - Integrate CLIJ2 deconvolution + content based fusion
 # - Write install documentation
-# - Handle exception when embryo could not be segmented
+# - Handle exception when embryo could not be segmented Fusion-branch
 # - Generate max time projections uncropped before trying to find the cropbox, so you have projection to define the manual cropbox on
 # - Check whether B-branch uses max projections stack cache
 # - Convert timepoints for fusion range specification to "free style" string in JSON
@@ -93,9 +91,12 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 	# [ERROR] Traceback (most recent call last):
 	#   File "tribolium_processing/Tribolium_Processing.py", line 1741, in <module>
 	# java.lang.IllegalArgumentException: java.lang.IllegalArgumentException: Row out of range
-# - Add copy of raw cropped stacks to save.	
 # - Do more proper checking of the already made PSFs for fusion, need to check that all have been assigned
 # - Add a lot more logging to fusion branch. log all bigstitcher commands?
+# - restart and log stdout from CLIJ fusion process if it has failed 1 time
+# - make Process spawning work for Linux as well
+# - Add checking that all raw aligned stacks have been moved from cache dir
+
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -160,10 +161,10 @@ Example JSON metadata file contents:
 METADATA_DIR_NAME = "(B1)-Metadata"
 TSTACKS_DIR_NAME = "(B3)-TStacks-ZM"
 RAW_IMAGES_DIR_NAME = "(P0)-ZStacks-Raw"
+RAW_ALIGNED_DIR_NAME = "(P1)-ZStack-AlignedCropped"
 RAW_CROPPED_DIR_NAME = "(B2)-ZStacks"
 CONTRAST_DIR_NAME = "(B4)-TStacks-ZN"
 MONTAGE_DIR_NAME = "(B5)-TStacks-ZN-Montage"
-FUSED_DIR_NAME = "(FUSION)-Fused-cropped-dataset"
 LINK_DIR_FOR_FUSION = "(FUSION)-linked-dataset"
 
 B_BRANCH_ERROR_FILE_NAME = "B_BRANCH_ERRORED"
@@ -221,14 +222,19 @@ IMAGE_PIXEL_DISTANCE_Z = pixel_distance_z
 
 NUM_DECONV_ITERATIONS = num_deconv_iterations
 
+FUSED_DIR_NAME = "(F0)-GenericFusion"
 if Only_fuse_or_deconvolve == "Only Fuse full dataset (BigStitcher)":
 	ONLY_FUSE_FULL = True
+	FUSED_DIR_NAME = "(F0)-ZStacks-SimpleFusion-ZS"
 if Only_fuse_or_deconvolve == "Content-based fusion (BigStitcher)":
 	FUSE_CONTENT_BASED = True
+	FUSED_DIR_NAME = "(F0)-ZStacks-ContentBasedFusion-ZS"
 if Only_fuse_or_deconvolve == "Fuse+Deconvolve (BigStitcher)":
 	FUSE_AND_DECONVOLVE_FULL = True
+	FUSED_DIR_NAME = "(F0)-ZStacks-BigStitcherDeconFusion-ZS"
 if Only_fuse_or_deconvolve == "Deconvolve->Fuse content-based (CLIJx GPU)":
 	FUSE_CLIJ_GPU = True
+	FUSED_DIR_NAME = "(F0)-ZStacks-DeconContentBasedFusion-ZS"
 
 CANVAS_SIZE_FOR_EMBRYO_PREVIEW = 1400 / IMAGE_DOWNSAMPLING_FACTOR_XY
 
@@ -247,6 +253,7 @@ class DatasetMetadata:
 	planes_to_keep_per_direction_b_branch = None
 	tp_fuse_start = 1
 	tp_fuse_end = -1
+	raw_aligned_stacks_dir = ""
 
 	def __init__(
 				self, 
@@ -270,6 +277,7 @@ class DatasetMetadata:
 		self.raw_images_dir_path = os.path.join(root_dir, RAW_IMAGES_DIR_NAME)
 		self.tp_fuse_start = tp_fuse_start
 		self.tp_fuse_end = tp_fuse_end
+		self.raw_aligned_stacks_dir = os.path.join(self.root_dir, RAW_ALIGNED_DIR_NAME)
 
 
 def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
@@ -322,6 +330,13 @@ def parse_range_string(astr):
 def get_free_memory_in_GB():
 	free_mem = round(float(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024 / 1024 / 1024, 3)
 	return free_mem
+
+def start_moving_files(file_paths, destination_dir):
+	for path in file_paths:
+		logging.info("Started move process of the file %s to %s" % (path, destination_dir))
+		move_command = ["move", path, destination_dir]
+		p = subprocess.Popen(move_command, shell=True)
+
 
 #						B-branch functions
 
@@ -1683,18 +1698,16 @@ def fusion_branch_processing(dataset_metadata_obj):
 
 			# temp_dir_fusion = os.path.join(CACHING_DIR, uuid.uuid4().hex) # CHANGE BACK!!!! #####################################
 			# mkpath(temp_dir_fusion)
-			temp_dir_fusion = os.path.join(CACHING_DIR, "testing_fusion_cache_dir_DS00" + str(dataset_metadata_obj.id) + "_" + os.path.basename(dataset_metadata_obj.datasets_dir)) #  uuid.uuid4().hex # CHANGE BACK!!!! #####################################
+			temp_dir_fusion = os.path.join(CACHING_DIR, "fusion_cache_dir_DS00" + str(dataset_metadata_obj.id) + "_" + os.path.basename(dataset_metadata_obj.datasets_dir)) #  uuid.uuid4().hex # CHANGE BACK!!!! #####################################
 			if not os.path.exists(temp_dir_fusion):
 				mkpath(temp_dir_fusion)	
 
-			logging_broadcast("USING DEBUGGING CACHING DIR !!!")
 			logging_broadcast("Starting deconvolution->content-based fusion on the GPU ")
 			initial_mem_usage = get_free_memory_in_GB()
 			used_mem_last_iter = initial_mem_usage
 			last_fused_path = ""
+			last_raw_transformed_paths = []
 			for tp_index, tp in enumerate(selected_timepoints):
-				# IJ.run("Collect Garbage", "")
-				# logging_broadcast("Collected Garbage")
 				fused_save_path =  os.path.join(fusion_output_dir, "deconv_weighted_fused_tp_%s.tiff" % tp)
 				logging_broadcast("Fusing timepoint %s" % tp)
 				if os.path.exists(fused_save_path):
@@ -1708,6 +1721,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 				logging_broadcast("Saving averaged transformed PSFs")
 				psf_paths = save_transformed_psfs(dataset_xml_path, transformed_psf_dir, tp, dataset_metadata_obj.number_of_directions)
 
+
 				logging_broadcast("Saving raw transformed stacks")
 				raw_transformed_paths = save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, tp, dataset_metadata_obj.number_of_directions)
 				if tp_index > 0:
@@ -1715,6 +1729,11 @@ def fusion_branch_processing(dataset_metadata_obj):
 					if last_fused_path != "skipped" and not os.path.exists(last_fused_path):
 						logging_broadcast("ERROR: Prevous timepoint fusion was not generated for some reason. Exiting pipeline!")
 						exit(1)
+					if os.path.exists(last_fused_path):
+						logging_broadcast("Started moving raw aligned stack for previous fused timepoint.")
+						start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
+
+
 				logging_broadcast("Starting deconvolution->fusion of the timepoint with params raw_transformed_paths: %s psf_paths: %s fused_save_path: %s NUM_DECONV_ITERATIONS: %s" % (raw_transformed_paths, psf_paths, fused_save_path, NUM_DECONV_ITERATIONS))
 				# Spawning a separate process for fusion and deconvolution because this function leaks memory, and this is the only way to make sure it is released.
 				start_deconv_fuse_timepoint_process(raw_transformed_paths, psf_paths, fused_save_path, NUM_DECONV_ITERATIONS)
@@ -1726,6 +1745,16 @@ def fusion_branch_processing(dataset_metadata_obj):
 				logging_broadcast("Used memory total: %s Gb" % used_mem)
 				used_mem_last_iter = used_mem
 				last_fused_path = fused_save_path
+				last_raw_transformed_paths = raw_transformed_paths
+			for sec in range(400):
+				if os.path.exists(last_fused_path):
+					logging_broadcast("Started moving raw aligned stack for the last timepoint.")
+					start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
+					return True
+				time.sleep(1)
+			logging_broadcast("ERROR: reached timeout on waiting for the last fused timepoint.")
+			return False
+				
 
 	return True
 

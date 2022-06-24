@@ -44,7 +44,7 @@ def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs
     """Do deconvolution on individual views, then fuse them adjusting for entropy
 
     Args:
-        views (ImagePlus[]): 32-bit list of registered(transformed to be aligned) image stacks (16-bit will be converted automatically), ready for fusion
+        views (ImagePlus[]): list of registered(transformed to be aligned) image stacks, ready for fusion
         transformed_psfs (ImagePlus[]): 32-bit transformed PSF for each view according to each view's registration affine transformation
         num_iterations (int, optional): number of deconvolution iterations. Defaults to 8.
         sigma_scaling_factor_xy (int, optional): scaling factor of X and Y axis, used to calculate sigmas for quick entropy calculation. Defaults to 4.
