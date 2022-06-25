@@ -1626,6 +1626,8 @@ def fusion_branch_processing(dataset_metadata_obj):
 		fusion_setup_folder = os.path.join(dataset_metadata_obj.root_dir, RAW_IMAGES_DIR_NAME, "CH%04d" % ch, "bigstitcher_dataset")
 		if not os.path.exists(fusion_setup_folder):
 			mkpath(fusion_setup_folder)
+		if not os.path.exists(dataset_metadata_obj.raw_aligned_stacks_dir):
+			mkpath(dataset_metadata_obj.raw_aligned_stacks_dir)
 
 
 		pre_fusion_dataset_basename = view_image_filename
