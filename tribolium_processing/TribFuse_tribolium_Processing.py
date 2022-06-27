@@ -1224,6 +1224,8 @@ def b_branch_processing(dataset_metadata_obj):
 	ndirections = dataset_metadata_obj.number_of_directions
 	root_dataset_dir = dataset_metadata_obj.root_dir
 
+	auto_cropbox_error = False
+
 	# Setting channel=1 to Loop one time over all dimensions in channel 1 to determine the dataset_maximal_crop_box_width
 	channel = 1
 	chan_dir_name = "CH%04d" % channel
@@ -1281,17 +1283,21 @@ def b_branch_processing(dataset_metadata_obj):
 
 		logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (
 			channel, direction))
-		try:
-			crop_template, cropped_max_time_proj, dataset_minimal_crop_box_dims = create_crop_template(
-				max_time_proj, m_dir, dataset_metadata_obj, dataset_minimal_crop_box_dims, use_dataset_box_dims=False)
-		except Exception as e:
-			logging.info(
-				"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
-			print("ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
-			return False
-		fs = FileSaver(cropped_max_time_proj)
-		fs.saveAsTiff(os.path.join(
-			m_dir, "cropped_max_time_proj.tif"))
+		if not auto_cropbox_error:
+			try:
+				crop_template, cropped_max_time_proj, dataset_minimal_crop_box_dims = create_crop_template(
+					max_time_proj, m_dir, dataset_metadata_obj, dataset_minimal_crop_box_dims, use_dataset_box_dims=False)
+			except Exception as e:
+				logging_broadcast(
+					"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s\nContinuing to create max projections for the manual crop box." % e)
+				auto_cropbox_error = True
+				continue
+			fs = FileSaver(cropped_max_time_proj)
+			fs.saveAsTiff(os.path.join(
+				m_dir, "cropped_max_time_proj.tif"))
+	
+	if auto_cropbox_error:
+		return False
 
 	# Main loop over the channels and directions for the dataset
 	for channel in range(1, dataset_metadata_obj.number_of_channels + 1):
