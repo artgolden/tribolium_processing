@@ -675,7 +675,8 @@ def bounding_roi_and_params_from_embryo_mask(mask, spacing_around_embryo=10):
 			MIN_PARTICLE_SIZE,
 			MAX_PARTICLE_SIZE)
 	pa.analyze(mask)
-
+	if roim.getCount() == 0:
+		raise Exception("Could not segment the embryo.")
 	rot_angle = round(table.getValue("Angle", 0), ndigits=1)
 	if rot_angle > 90:
 		rot_angle -= 180
@@ -848,13 +849,18 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 	if not os.path.exists(cropped_fused_dir):
 		mkpath(cropped_fused_dir)
 
-	z_bounding_roi = get_embryo_bounding_rectangle_and_params(max_projection=z_projection, show_mask=False)
-	y_bounding_roi = get_embryo_bounding_rectangle_and_params(max_projection=y_projection, show_mask=False)
+	try:
+		z_bounding_roi = get_embryo_bounding_rectangle_and_params(max_projection=z_projection, show_mask=False)
+		y_bounding_roi = get_embryo_bounding_rectangle_and_params(max_projection=y_projection, show_mask=False)
+	except Exception as e:
+		logging_broadcast(
+			"ERROR: Encountered an exception while trying to create a bounding rectangle around embryo. Skipping the dataset. Exception:\n%s" % e)
+		return (False, False)
 
 	if abs(z_bounding_roi["embryo_center_x"] - y_bounding_roi["embryo_center_x"]) > 5:
 		print("Could not reliably determine embryo X center position from Z and Y projections.")
 		logging.info("Could not reliably determine embryo X center position from Z and Y projections.")
-		return False
+		return (False, False)
 
 	logging.info("Embryo box params from Z projection:\n%s" % z_bounding_roi)
 	logging.info("Embryo box params from Y projection:\n%s " % y_bounding_roi)
