@@ -84,13 +84,8 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # this is very slow. Probably need to switch to some other way of manually defining min/max.
 # - Write install documentation
 # - Handle exception when embryo could not be segmented Fusion-branch
-# - Generate max time projections uncropped before trying to find the cropbox, so you have projection to define the manual cropbox on
 # - Check whether B-branch uses max projections stack cache
 # - Convert timepoints for fusion range specification to "free style" string in JSON
-# - Handle B-branch exception when embryo could not be segmented:
-	# [ERROR] Traceback (most recent call last):
-	#   File "tribolium_processing/Tribolium_Processing.py", line 1741, in <module>
-	# java.lang.IllegalArgumentException: java.lang.IllegalArgumentException: Row out of range
 # - Do more proper checking of the already made PSFs for fusion, need to check that all have been assigned
 # - Add a lot more logging to fusion branch. log all bigstitcher commands?
 # - restart and log stdout from CLIJ fusion process if it has failed 1 time
@@ -394,6 +389,8 @@ def create_crop_template(max_time_projection, meta_dir, dataset_metadata_obj, da
 				MIN_PARTICLE_SIZE,
 				MAX_PARTICLE_SIZE)
 		pa.analyze(mask)
+		if roim.getCount() == 0:
+			raise Exception("Could not segment the embryo.")
 		rot_angle = round(table.getValue("Angle", 0), ndigits=1)
 		if rot_angle > 90:
 			rot_angle -= 180
