@@ -83,15 +83,14 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
 # this is very slow. Probably need to switch to some other way of manually defining min/max.
 # - Write install documentation
-# - Handle exception when embryo could not be segmented Fusion-branch
-# - Check whether B-branch uses max projections stack cache
+# - Check whether B-branch uses max projections stack cache (yes it does, need to put it in the Docs)
 # - Convert timepoints for fusion range specification to "free style" string in JSON
 # - Do more proper checking of the already made PSFs for fusion, need to check that all have been assigned
 # - Add a lot more logging to fusion branch. log all bigstitcher commands?
 # - restart and log stdout from CLIJ fusion process if it has failed 1 time
 # - make Process spawning work for Linux as well
 # - Add checking that all raw aligned stacks have been moved from cache dir
-
+# - Add documentation to functions
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -878,9 +877,8 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 	transformation_embryo_to_center[2][3] = y_bounding_roi["embryo_center_y"]
 	transf_to_raw = get_fusion_tranformation_from_xml_file(fused_xml_path)
 	if transf_to_raw == False:
-		print("ERROR: could not extract transformation matrix from fusion XML file!")
-		logging.info("ERROR: could not extract transformation matrix from fusion XML file!")
-		exit(1)
+		logging_broadcast("ERROR: could not extract transformation matrix from fusion XML file!")
+		return (False, False)
 	transformation_embryo_to_center = multiply_matrices(transformation_embryo_to_center, transf_to_raw)
 	transformation_embryo_to_center = inverse_matrix(transformation_embryo_to_center)
 
@@ -1160,6 +1158,15 @@ def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 def logging_broadcast(string):
 	print(string)
 	logging.info(string)
+
+def send_notification_and_exit(message, do_exit=True):
+	bot_notifications_exe = os.path.join(getProperty("fiji.dir"),  "plugins", "tribolium_processing", "send_message_to_bot.exe")
+	command = [bot_notifications_exe, '-m', message]
+	p = subprocess.Popen(command)
+	logging_broadcast("Sending notification to Telegram bot and exiting. Message: %s" % message)
+	if do_exit: 
+		exit(1)
+
 
 
 #					Pipeline main process functions
@@ -1739,7 +1746,8 @@ def fusion_branch_processing(dataset_metadata_obj):
 					logging_broadcast("Checking wheather last timepoint has fused successfully. Expected path: %s  Is file present: %s " % (last_fused_path, os.path.exists(last_fused_path)))
 					if last_fused_path != "skipped" and not os.path.exists(last_fused_path):
 						logging_broadcast("ERROR: Prevous timepoint fusion was not generated for some reason. Exiting pipeline!")
-						exit(1)
+						message = "Pipeline for folder: %s Has experienced fatal error on the Dataset: %s. Pipeline exiting." % (dataset_metadata_obj.datasets_dir, dataset_metadata_obj.id)
+						send_notification_and_exit(message)
 					if os.path.exists(last_fused_path):
 						logging_broadcast("Started moving raw aligned stack for previous fused timepoint.")
 						start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
@@ -1894,6 +1902,8 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 
 
 	logging_broadcast("Finished processing all datasets.")
+	message = "Pipeline for folder: %s Has finished processing all datasets!" % (dataset_metadata_obj.datasets_dir)
+	send_notification_and_exit(message, do_exit=False)
 
 
 if __name__ in ['__builtin__', '__main__']:
