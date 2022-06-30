@@ -1720,11 +1720,14 @@ def fusion_branch_processing(dataset_metadata_obj):
 				extract_psf(dataset_xml_path, reference_timepoint)
 				assign_psf(dataset_xml_path, reference_timepoint)
 
-			# temp_dir_fusion = os.path.join(CACHING_DIR, uuid.uuid4().hex) # CHANGE BACK!!!! #####################################
-			# mkpath(temp_dir_fusion)
+
 			temp_dir_fusion = os.path.join(CACHING_DIR, "fusion_cache_dir_DS00" + str(dataset_metadata_obj.id) + "_" + os.path.basename(dataset_metadata_obj.datasets_dir)) #  uuid.uuid4().hex # CHANGE BACK!!!! #####################################
 			if not os.path.exists(temp_dir_fusion):
 				mkpath(temp_dir_fusion)	
+
+			transformed_psf_dir = os.path.join(fusion_setup_folder, "transformed_psf")
+			if not os.path.exists(transformed_psf_dir):
+				mkpath(transformed_psf_dir)
 
 			logging_broadcast("Starting deconvolution->content-based fusion on the GPU ")
 			initial_mem_usage = get_free_memory_in_GB()
@@ -1739,9 +1742,6 @@ def fusion_branch_processing(dataset_metadata_obj):
 					last_fused_path = "skipped"
 					continue
 
-				transformed_psf_dir = os.path.join(fusion_output_dir, "transformed_psf")
-				if not os.path.exists(transformed_psf_dir):
-					mkpath(transformed_psf_dir)
 				logging_broadcast("Saving averaged transformed PSFs")
 				psf_paths = save_transformed_psfs(dataset_xml_path, transformed_psf_dir, tp, dataset_metadata_obj.number_of_directions)
 
