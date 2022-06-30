@@ -4,17 +4,21 @@
 # @ File(label='Choose a directory with datasets', style='directory') datasets_dir
 # @ File(label='Choose a file with metadata about embryo directions', style='file') metadata_file
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
-# @ Boolean (label='Compress images?', value=true) compress_on_save
-# @ Boolean (label='B-branch: Use previously cropped stacks (if present)?', value=false) use_cropped_cache
-# @ Boolean (label='Fusion-branch: Use previously created dataset (works only if everything up to fusion start is done)?', value=false) use_fusion_dataset_cache
+# @ File(label='Choose a cache directory (preferably on an SSD or Ramdisk, otherwise you get no benefits.) (optional param.)', style='directory', required=false) caching_dir
+
+#@ String (visibility=MESSAGE, value="\n<html><h1>B-branch parameters</h1></html>", required=false) msg_b_banch
 # @ Boolean (label='Do B-branch processing?', value=false) do_b_branch
-# @ Boolean (label='Do Fusion-branch processing?', value=false) do_fusion_branch
+# @ Boolean (label='B-branch: Use previously cropped stacks (if present)?', value=false) use_cropped_cache
+# @ Boolean (label='Compress images?', value=true) compress_on_save
 # @ Boolean (label='Do histogram matching adjustment?', value=true) do_histogram_matching
 # @ Integer (label='Percentage of overexposed pixels during histogram contrast adjustment', value=1) PERCENT_OVEREXPOSED_PIXELS
+
+#@ String (visibility=MESSAGE, value="\n<html><h1>Fusion-branch parameters</h1></html>", required=false) msg_fuse_branch
+# @ Boolean (label='Do Fusion-branch processing?', value=false) do_fusion_branch
 # @ Boolean (label='Run fusion-branch only up to downsampled preview', value=true) run_fusion_up_to_downsampled_preview
 # @ Boolean (label='Run fusion-branch only up to start of deconvolution', value=False) run_fusion_up_to_start_of_deconvolution
 # @ String (choices={"Only Fuse full dataset (BigStitcher)", "Content-based fusion (BigStitcher)", "Fuse+Deconvolve (BigStitcher)", "Deconvolve->Fuse content-based (CLIJx GPU)"}, style="listBox", value="Fuse+Deconvolve") Only_fuse_or_deconvolve
-# @ File(label='Choose a cache directory (preferably on an SSD or Ramdisk, otherwise you get no benefits.) (optional param.)', style='directory', required=false) caching_dir
+# @ Boolean (label='Fusion-branch: Use previously created dataset (works only if everything up to fusion start is done)?', value=false) use_fusion_dataset_cache
 # @ String (label='Thresholding for embryo segmentation', choices={"triangle", "minerror", "mean", "huang2"}, style="radioButtonHorizontal", value="triangle") segmentation_threshold_type
 # @ Float (label='Pixel distance X axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_x
 # @ Float (label='Pixel distance Y axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_y
@@ -24,7 +28,7 @@
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 # For detailed documentation go to https://github.com/artgolden/tribolium_processing or read the README.md
-# Last manual update of this line 2022.5.18 :)
+# Last manual update of this line 2022.6.30 :)
 
 from collections import namedtuple
 from copy import deepcopy
@@ -78,7 +82,6 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # TODO: 
 # - Write current limitations and implicit assumptions in the documentation
 # - test 2 channel case
-# - make option to redo the downsampled images for preview, or better, check if they are the same dimension as planned
 # - make an option to load the PSF from a file
 # - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
 # this is very slow. Probably need to switch to some other way of manually defining min/max.
@@ -1162,8 +1165,11 @@ def logging_broadcast(string):
 def send_notification_and_exit(message, do_exit=True):
 	bot_notifications_exe = os.path.join(getProperty("fiji.dir"),  "plugins", "tribolium_processing", "send_message_to_bot.exe")
 	command = [bot_notifications_exe, '-m', message]
-	p = subprocess.Popen(command)
-	logging_broadcast("Sending notification to Telegram bot and exiting. Message: %s" % message)
+	if os.path.exists(bot_notifications_exe):
+		logging_broadcast("Sending notification to Telegram bot and exiting. Message: %s" % message)
+		p = subprocess.Popen(command)
+	else:
+		logging.info("WARNING: could not find Telegram bot notifications executable at: %s. Skipping notifications." % bot_notifications_exe)
 	if do_exit: 
 		exit(1)
 
