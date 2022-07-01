@@ -1101,7 +1101,7 @@ def is_specimen_input_valid(specimens_per_direction):
 	return True
 
 def is_timepoints_range_to_fuse_valid(tp_range_string):
-	if not bool(re.match('^[0-9-,]+$',tp_range_string)):
+	if not bool(re.match('^[0-9-, ]+$',tp_range_string)):
 		return False
 	return True
 
@@ -1144,7 +1144,7 @@ def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 			exit(1)
 		if "timepoints_range_to_fuse" in dataset.keys() and not is_timepoints_range_to_fuse_valid(dataset["timepoints_range_to_fuse"]):
 			print("Error while parsing .json file: not valid timepoints_range_to_fuse \"%s\" for the dataset with ID: \"%s\". Exiting." % (
-				dataset["head_direction"], dataset_id))
+				dataset["timepoints_range_to_fuse"], dataset_id))
 			print(EXAMPLE_JSON_METADATA_FILE)
 			exit(1)
 		if specimen_directions_in_channels == ():
