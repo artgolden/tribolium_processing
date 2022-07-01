@@ -1,6 +1,7 @@
 #@ File (label='Image to rotate and project ') image_path
 #@ File(label='Directory to save images', style='directory') output_dir
 #@ Double (value=22.5, stepSize=0.5, label='Angle of rotation around Y-axis in degrees', style="format:#.00") rotation_angleY 
+#@ Double (value=0, stepSize=0.5, label='Additional pre-rotation around Y-axis in degrees', style="format:#.00") rotation_addition 
 #@ OpService ops
 #@ DatasetIOService io
 #@ DatasetService ds
@@ -29,6 +30,7 @@ io = io
 ops = ops
 ui = ui
 rotation_angleY = rotation_angleY
+rotation_addition = rotation_addition
 print("Got rotation angle %s" % rotation_angleY)
 output_dir = output_dir.getAbsolutePath()
 image_path = image_path.getAbsolutePath()
@@ -62,7 +64,7 @@ for plane in range(nplanes):
 
 	clij2.paste(adjustment_2d, depth_adjustment_stack, 0, 0, plane)
 
-angleX = 0.0
+angleX = 0
 angleY = rotation_angleY
 angleZ = 0
 rotateAroundCenter = True
@@ -71,7 +73,7 @@ num_projections = 360/int(angleY)
 print("Rotating and creating projections")
 projections = clij2.create([stack_dims[0], stack_dims[1], num_projections], input.getNativeType())
 for i in range(num_projections):
-	angleY = rotation_angleY * i * math.pi / 180
+	angleY = (rotation_angleY * i + rotation_addition ) * math.pi / 180 
 	print("Rotating by angle: %s" % (rotation_angleY * i))
 	clij2.rotate3D(input, rotated, angleX, angleY, angleZ, rotateAroundCenter)
 	clij2.multiplyImages(rotated, depth_adjustment_stack, rotated_adjusted)
