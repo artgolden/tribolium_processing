@@ -40,6 +40,7 @@ import fnmatch
 import json
 import logging
 from datetime import datetime
+import shutil
 import subprocess
 import time
 import traceback
@@ -870,8 +871,8 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 	
 	save_roi(z_bounding_roi["bounding_roi_rect"], os.path.join(dataset_dir, "z_projection_bounding_rectangle.roi"))
 	save_roi(y_bounding_roi["bounding_roi_rect"], os.path.join(dataset_dir, "y_projection_bounding_rectangle.roi"))
-	save_tiff(z_bounding_roi["mask"], os.path.join(dataset_dir, "z_projection_segmentation_mask.tiff"))
-	save_tiff(y_bounding_roi["mask"], os.path.join(dataset_dir, "y_projection_segmentation_mask.tiff"))
+	save_tiff(z_bounding_roi["mask"], os.path.join(dataset_dir, "z_projection_segmentation_mask.tif"))
+	save_tiff(y_bounding_roi["mask"], os.path.join(dataset_dir, "y_projection_segmentation_mask.tif"))
 
 
 	transformation_embryo_to_center = get_4_4_identity_matrix()
@@ -1624,8 +1625,8 @@ def fusion_branch_processing(dataset_metadata_obj):
 	IJ.run(zy_cropped_projections, "Canvas Size...", "width=%s height=%s position=Center" % (CANVAS_SIZE_FOR_EMBRYO_PREVIEW, CANVAS_SIZE_FOR_EMBRYO_PREVIEW))
 	zy_projections_filename = view_image_filename
 	zy_projections_filename.direction = "z+yM"
-	zy_projections_external_path = os.path.join(cropped_projections_dir, zy_projections_filename.get_name_without_extension() + "_montage.tiff")
-	zy_projections_meta_path = os.path.join(dataset_metadata_obj.root_dir, METADATA_DIR_NAME, zy_projections_filename.get_name_without_extension() + "_montage.tiff")
+	zy_projections_external_path = os.path.join(cropped_projections_dir, zy_projections_filename.get_name_without_extension() + "_montage.tif")
+	zy_projections_meta_path = os.path.join(dataset_metadata_obj.root_dir, METADATA_DIR_NAME, zy_projections_filename.get_name_without_extension() + "_montage.tif")
 	save_tiff(zy_cropped_projections, zy_projections_external_path)
 	save_tiff(zy_cropped_projections, zy_projections_meta_path)
 
@@ -1735,9 +1736,9 @@ def fusion_branch_processing(dataset_metadata_obj):
 			last_fused_path = ""
 			last_raw_transformed_paths = []
 			for tp_index, tp in enumerate(selected_timepoints):
-				fused_save_path =  os.path.join(fusion_output_dir, "deconv_weighted_fused_tp_%s.tiff" % tp)
+				fused_save_path =  os.path.join(fusion_output_dir, "deconv_weighted_fused_tp_%s.tif" % tp)
 				logging_broadcast("Fusing timepoint %s" % tp)
-				if os.path.exists(fused_save_path):
+				if os.path.exists(fused_save_path) or os.path.exists(fused_save_path + "f"):
 					logging_broadcast("Found previously fused timepoint, skipping.")
 					last_fused_path = "skipped"
 					continue
@@ -1763,11 +1764,10 @@ def fusion_branch_processing(dataset_metadata_obj):
 				# Spawning a separate process for fusion and deconvolution because this function leaks memory, and this is the only way to make sure it is released.
 				start_deconv_fuse_timepoint_process(raw_transformed_paths, psf_paths, fused_save_path, NUM_DECONV_ITERATIONS)
 
-				# shutil.rmtree(temp_dir_fusion) ## Change this! ##########################################
 				used_mem = get_free_memory_in_GB()
-				logging_broadcast("Used memory growth per iteration: %s Gb" % (used_mem - used_mem_last_iter))
-				logging_broadcast("Used memory growth total: %s Gb" % (used_mem - initial_mem_usage))
-				logging_broadcast("Used memory total: %s Gb" % used_mem)
+				logging.info("Used memory growth per iteration: %s Gb" % (used_mem - used_mem_last_iter))
+				logging.info("Used memory growth total: %s Gb" % (used_mem - initial_mem_usage))
+				logging.info("Used memory total: %s Gb" % used_mem)
 				used_mem_last_iter = used_mem
 				last_fused_path = fused_save_path
 				last_raw_transformed_paths = raw_transformed_paths
@@ -1777,6 +1777,8 @@ def fusion_branch_processing(dataset_metadata_obj):
 					start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
 					return True
 				time.sleep(1)
+			if get_tiffs_in_directory(temp_dir_fusion) == []:
+				shutil.rmtree(temp_dir_fusion)
 			logging_broadcast("ERROR: reached timeout on waiting for the last fused timepoint.")
 			return False
 				

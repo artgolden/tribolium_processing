@@ -59,7 +59,7 @@ def get_tiffs_in_directory(directory):
 	"""
 	file_names = []
 	for fname in os.listdir(directory):
-		if fname.lower().endswith(".tif"):
+		if fname.lower().endswith(".tif") or fname.lower().endswith(".tiff"):
 			file_names.append(os.path.join(directory, fname))
 	file_names = sorted(file_names)
 	return file_names
@@ -67,7 +67,7 @@ def get_tiffs_in_directory(directory):
 def get_any_tiff_name_from_dir(input_dir):
 	file_name = None
 	for fname in os.listdir(input_dir):
-		if fname.lower().endswith(".tif"):
+		if fname.lower().endswith(".tif") or fname.lower().endswith(".tiff"):
 			file_name = fname
 			break
 	if file_name == None:
