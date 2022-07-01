@@ -12,10 +12,7 @@
             },
             "head_direction": "right",
             "use_manual_bounding_box": false,
-            "timepoints_to_fuse": [
-                1,
-                23
-            ]
+            "timepoints_to_fuse": "1,3-5,40-45"
         },
         {
             "ID": 3,

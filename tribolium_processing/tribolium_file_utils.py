@@ -51,9 +51,6 @@ def get_tiffs_in_directory(directory):
 	Args:
 		directory (str): full path to directory
 
-	Raises:
-		Exception: If no images were found
-
 	Returns:
 		str[]: list of full paths to tiff files
 	"""

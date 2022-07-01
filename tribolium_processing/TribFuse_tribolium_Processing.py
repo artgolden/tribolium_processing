@@ -112,7 +112,7 @@ Example JSON metadata file contents:
 			},
 			"head_direction": "right",
 			"use_manual_bounding_box": false,
-			"timepoints_range_to_fuse": [1,100]
+			"timepoints_range_to_fuse": "1,3-5,40-45"
 		},
 		{
 			"ID": 3,
@@ -249,8 +249,7 @@ class DatasetMetadata:
 	embryo_head_direction = ""
 	use_manual_b_branch_bounding_box = False
 	planes_to_keep_per_direction_b_branch = None
-	tp_fuse_start = 1
-	tp_fuse_end = -1
+	tp_selected_to_fuse = []
 	raw_aligned_stacks_dir = ""
 
 	def __init__(
@@ -261,8 +260,7 @@ class DatasetMetadata:
 				embryo_head_direction,
 				use_manual_b_branch_bounding_box=False,
 				planes_to_keep_per_direction_b_branch=None,
-				tp_fuse_start=1,
-				tp_fuse_end=-1):
+				tp_selected_to_fuse=[]):
 		self.id = id
 		self.root_dir = root_dir
 		self.datasets_dir = os.path.dirname(root_dir)
@@ -273,9 +271,11 @@ class DatasetMetadata:
 		self.number_of_channels = len(specimen_directions_in_channels)
 		self.number_of_directions = len(specimen_directions_in_channels[0])
 		self.raw_images_dir_path = os.path.join(root_dir, RAW_IMAGES_DIR_NAME)
-		self.tp_fuse_start = tp_fuse_start
-		self.tp_fuse_end = tp_fuse_end
+		self.tp_selected_to_fuse = tp_selected_to_fuse
 		self.raw_aligned_stacks_dir = os.path.join(self.root_dir, RAW_ALIGNED_DIR_NAME)
+	# def __str__(self):
+
+	# 	return object_string
 
 
 def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
@@ -296,11 +296,14 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 	else:
 		planes_to_keep_per_direction_b_branch = None
 	
-	tp_fuse_start = 1
-	tp_fuse_end = -1
+	tp_selected_to_fuse = []
 	if "timepoints_range_to_fuse" in metadata_dict.keys():
-		tp_fuse_start = metadata_dict["timepoints_range_to_fuse"][0]
-		tp_fuse_end = metadata_dict["timepoints_range_to_fuse"][1]
+		try:
+			tp_selected_to_fuse = parse_range_string(metadata_dict["timepoints_range_to_fuse"])
+		except Exception as e:
+			logging_broadcast("ERROR: could not parse timepoints_range_to_fuse in JSON metadata file. Encountered exception: %s" % e)
+			return False
+			
 
 	return DatasetMetadata(
 							id=metadata_dict["ID"], 
@@ -309,8 +312,7 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 							embryo_head_direction = metadata_dict["head_direction"],
 							use_manual_b_branch_bounding_box=metadata_dict["use_manual_bounding_box"],
 							planes_to_keep_per_direction_b_branch=planes_to_keep_per_direction_b_branch,
-							tp_fuse_start=tp_fuse_start,
-							tp_fuse_end=tp_fuse_end,
+							tp_selected_to_fuse=tp_selected_to_fuse
 							)
 		
 SegmentationResults = namedtuple("SegmentationResults", ["transformation_embryo_to_center", "rotation_angle_z", "rotation_angle_y", "embryo_crop_box"])
@@ -1000,23 +1002,24 @@ def link_all_files_from_directions_to_folder(directions_dirs_list, symlinked_fol
 					logging.info("ERROR: Could not determine Operating System type. Exiting.")
 					exit(1)
 	
-def get_timepoint_list_from_folder(dir_path, tp_start, tp_end):
+def get_timepoint_list_from_folder(dir_path, selected_timepoints):
 	timepoints = []
 	for file in get_tiffs_in_directory(dir_path):
 		filename = FredericFile(os.path.basename(file))
 		try:
 			timepoints.append(int(filename.time_point))
 		except:
-			print("ERROR: could not extract timepoint from file name. %s" % file)
-			logging.info("ERROR: could not extract timepoint from file name. %s" % file)
+			logging_broadcast("ERROR: could not extract timepoint from file name. %s" % file)
 			return False
 	# removing duplicates and sorting
 	timepoints = list(dict.fromkeys(timepoints))
 	timepoints.sort()
 
 	# subset timepoints
-	if tp_end != -1:
-		timepoints = [timepoints[i] for i in range(timepoints.index(tp_start), timepoints.index(tp_end) + 1)]  
+	if selected_timepoints != []:
+		timepoints = [tp for tp in timepoints if tp in selected_timepoints]
+		if len(timepoints) < len(selected_timepoints):
+			logging_broadcast("WARNING: not all timepoints selected for fusion were found. Using timepoints: %s" % timepoints)
 	return timepoints 
 
 def start_deconv_fuse_timepoint_process(raw_transformed_paths, psf_paths, fused_output_path, num_deconv_iter):
@@ -1096,14 +1099,8 @@ def is_specimen_input_valid(specimens_per_direction):
 			return False
 	return True
 
-def is_timepoints_range_to_fuse_valid(tp_range):
-	start = tp_range[0]
-	end = tp_range[1]
-	if not isinstance(start, int) or not isinstance(end, int):
-		return False
-	if end < start:
-		return False
-	if start < 1:
+def is_timepoints_range_to_fuse_valid(tp_range_string):
+	if not bool(re.match('^[0-9-,]+$',tp_range_string)):
 		return False
 	return True
 
@@ -1562,7 +1559,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 	raw_img_ch_1_dir = os.path.join(dataset_metadata_obj.raw_images_dir_path, "CH0001")
 	raw_direction_dirs = get_directions_dirs_for_folder(raw_img_ch_1_dir, dataset_metadata_obj.number_of_directions)
 	example_raw_filename = get_any_tiff_name_from_dir(raw_direction_dirs[0])
-	reference_timepoint = dataset_metadata_obj.tp_fuse_start
+	reference_timepoint = min(dataset_metadata_obj.tp_selected_to_fuse)
 
 
 	downsampled_dir = os.path.join(dataset_metadata_obj.root_dir, "downsampled_%s_timepoint" % reference_timepoint)
@@ -1668,8 +1665,11 @@ def fusion_branch_processing(dataset_metadata_obj):
 
 		selected_timepoints = get_timepoint_list_from_folder(
 											raw_direction_dirs[0], 
-											dataset_metadata_obj.tp_fuse_start, 
-											dataset_metadata_obj.tp_fuse_end)
+											dataset_metadata_obj.tp_selected_to_fuse)
+		if selected_timepoints == False:
+			logging.info("Parsed timepoint list: dataset_metadata_obj.tp_selected_to_fuse = %s" % dataset_metadata_obj.tp_selected_to_fuse)
+			logging_broadcast("ERROR: Could not extract timepoint file list. Skipping dataset.")
+			return False
 		
 		dataset_xml_path = os.path.join(fusion_setup_folder, pre_fusion_dataset_basename + ".xml")
 		is_bounding_box_present = get_bounding_box_coords_from_xml(dataset_xml_path, "embryo_cropped") is not None
@@ -1677,7 +1677,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 		if USE_FUSION_DATASET_CACHE and is_bounding_box_present:
 			logging_broadcast("Found previously created dataset with 'embryo_cropped' crop box. Skipping dataset creation and registration.")
 		else:
-			logging_broadcast("Creating dataset for fusion with selected timepoints: %s-%s" % (selected_timepoints[0], selected_timepoints[-1]))
+			logging_broadcast("Creating dataset for fusion with selected timepoints: %s" % (selected_timepoints))
 			create_and_register_full_dataset(fusion_setup_folder, 
 											pre_fusion_dataset_basename, 
 											full_dataset_file_pattern, 
@@ -1775,10 +1775,10 @@ def fusion_branch_processing(dataset_metadata_obj):
 				if os.path.exists(last_fused_path):
 					logging_broadcast("Started moving raw aligned stack for the last timepoint.")
 					start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
+					if get_tiffs_in_directory(temp_dir_fusion) == []:
+						shutil.rmtree(temp_dir_fusion)
 					return True
 				time.sleep(1)
-			if get_tiffs_in_directory(temp_dir_fusion) == []:
-				shutil.rmtree(temp_dir_fusion)
 			logging_broadcast("ERROR: reached timeout on waiting for the last fused timepoint.")
 			return False
 				
@@ -1827,6 +1827,10 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		skip_the_dataset = False
 
 		dataset_metadata_obj = get_DatasetMetadata_obj_from_metadata_dict(dataset, datasets_dir)
+		if dataset_metadata_obj == False:
+			logging_broadcast("ERROR: could not create dataset metadata object. Skipping dataset.")
+			continue
+		logging.info("DatasetMetadata object: %s" % vars(dataset_metadata_obj))
 		raw_images_dir = dataset_metadata_obj.raw_images_dir_path
 		root_dataset_dir = dataset_metadata_obj.root_dir
 
