@@ -1,6 +1,7 @@
 #@ OpService ops
 #@ DatasetService ds
 #@ ConvertService convert
+#@ String (visibility=MESSAGE, value="\n<html><h1>Main pipeline inputs</h1></html>", required=false) msg_main
 # @ File(label='Choose a directory with datasets', style='directory') datasets_dir
 # @ File(label='Choose a file with metadata about embryo directions', style='file') metadata_file
 # @ String(label='Dataset prefix', value='MGolden2022A-') dataset_name_prefix
@@ -42,6 +43,7 @@ import logging
 from datetime import datetime
 import shutil
 import subprocess
+from tempfile import tempdir
 import time
 import traceback
 import sys
@@ -81,20 +83,19 @@ tribolium_image_utils.dsServiceImageUtilsLocal = ds
 tribolium_image_utils.convertServiceImageUtilsLocal = convert
 
 # TODO: 
+# - Make proper names for the fused raw aligned files
 # - Write current limitations and implicit assumptions in the documentation
 # - test 2 channel case
 # - make an option to load the PSF from a file
 # - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
 # this is very slow. Probably need to switch to some other way of manually defining min/max.
-# - Write install documentation
 # - Check whether B-branch uses max projections stack cache (yes it does, need to put it in the Docs)
-# - Convert timepoints for fusion range specification to "free style" string in JSON
 # - Do more proper checking of the already made PSFs for fusion, need to check that all have been assigned
 # - Add a lot more logging to fusion branch. log all bigstitcher commands?
 # - restart and log stdout from CLIJ fusion process if it has failed 1 time
 # - make Process spawning work for Linux as well
-# - Add checking that all raw aligned stacks have been moved from cache dir
 # - Add documentation to functions
+# - do projections and montages from fused data
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -249,7 +250,7 @@ class DatasetMetadata:
 	embryo_head_direction = ""
 	use_manual_b_branch_bounding_box = False
 	planes_to_keep_per_direction_b_branch = None
-	tp_selected_to_fuse = []
+	tp_selected_to_fuse = False
 	raw_aligned_stacks_dir = ""
 
 	def __init__(
@@ -260,7 +261,7 @@ class DatasetMetadata:
 				embryo_head_direction,
 				use_manual_b_branch_bounding_box=False,
 				planes_to_keep_per_direction_b_branch=None,
-				tp_selected_to_fuse=[]):
+				tp_selected_to_fuse=False):
 		self.id = id
 		self.root_dir = root_dir
 		self.datasets_dir = os.path.dirname(root_dir)
@@ -296,7 +297,7 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 	else:
 		planes_to_keep_per_direction_b_branch = None
 	
-	tp_selected_to_fuse = []
+	tp_selected_to_fuse = False
 	if "timepoints_range_to_fuse" in metadata_dict.keys():
 		try:
 			tp_selected_to_fuse = parse_range_string(metadata_dict["timepoints_range_to_fuse"])
@@ -1002,7 +1003,7 @@ def link_all_files_from_directions_to_folder(directions_dirs_list, symlinked_fol
 					logging.info("ERROR: Could not determine Operating System type. Exiting.")
 					exit(1)
 	
-def get_timepoint_list_from_folder(dir_path, selected_timepoints):
+def get_timepoint_list_from_folder(dir_path, selected_timepoints=False):
 	timepoints = []
 	for file in get_tiffs_in_directory(dir_path):
 		filename = FredericFile(os.path.basename(file))
@@ -1016,7 +1017,7 @@ def get_timepoint_list_from_folder(dir_path, selected_timepoints):
 	timepoints.sort()
 
 	# subset timepoints
-	if selected_timepoints != []:
+	if selected_timepoints != False:
 		timepoints = [tp for tp in timepoints if tp in selected_timepoints]
 		if len(timepoints) < len(selected_timepoints):
 			logging_broadcast("WARNING: not all timepoints selected for fusion were found. Using timepoints: %s" % timepoints)
@@ -1559,7 +1560,14 @@ def fusion_branch_processing(dataset_metadata_obj):
 	raw_img_ch_1_dir = os.path.join(dataset_metadata_obj.raw_images_dir_path, "CH0001")
 	raw_direction_dirs = get_directions_dirs_for_folder(raw_img_ch_1_dir, dataset_metadata_obj.number_of_directions)
 	example_raw_filename = get_any_tiff_name_from_dir(raw_direction_dirs[0])
-	reference_timepoint = min(dataset_metadata_obj.tp_selected_to_fuse)
+	timpoints_to_fuse = get_timepoint_list_from_folder(raw_direction_dirs[0], dataset_metadata_obj.tp_selected_to_fuse)
+	if timpoints_to_fuse == False:
+		logging.info("Parsed timepoint list: dataset_metadata_obj.tp_selected_to_fuse = %s" % dataset_metadata_obj.tp_selected_to_fuse)
+		logging_broadcast("ERROR: Could not extract timepoint file list. Skipping dataset.")
+		return False
+	reference_timepoint = min(timpoints_to_fuse)
+
+
 
 
 	downsampled_dir = os.path.join(dataset_metadata_obj.root_dir, "downsampled_%s_timepoint" % reference_timepoint)
@@ -1663,13 +1671,6 @@ def fusion_branch_processing(dataset_metadata_obj):
 		full_dataset_file_pattern.time_point = "{tttt}"
 		full_dataset_file_pattern = os.path.join("..", "DR{aaaa}", full_dataset_file_pattern.get_name())
 
-		selected_timepoints = get_timepoint_list_from_folder(
-											raw_direction_dirs[0], 
-											dataset_metadata_obj.tp_selected_to_fuse)
-		if selected_timepoints == False:
-			logging.info("Parsed timepoint list: dataset_metadata_obj.tp_selected_to_fuse = %s" % dataset_metadata_obj.tp_selected_to_fuse)
-			logging_broadcast("ERROR: Could not extract timepoint file list. Skipping dataset.")
-			return False
 		
 		dataset_xml_path = os.path.join(fusion_setup_folder, pre_fusion_dataset_basename + ".xml")
 		is_bounding_box_present = get_bounding_box_coords_from_xml(dataset_xml_path, "embryo_cropped") is not None
@@ -1677,11 +1678,11 @@ def fusion_branch_processing(dataset_metadata_obj):
 		if USE_FUSION_DATASET_CACHE and is_bounding_box_present:
 			logging_broadcast("Found previously created dataset with 'embryo_cropped' crop box. Skipping dataset creation and registration.")
 		else:
-			logging_broadcast("Creating dataset for fusion with selected timepoints: %s" % (selected_timepoints))
+			logging_broadcast("Creating dataset for fusion with selected timepoints: %s" % (timpoints_to_fuse))
 			create_and_register_full_dataset(fusion_setup_folder, 
 											pre_fusion_dataset_basename, 
 											full_dataset_file_pattern, 
-											selected_timepoints,
+											timpoints_to_fuse,
 											(1, dataset_metadata_obj.number_of_directions),
 											(IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z),
 											reference_timepoint=reference_timepoint)
@@ -1735,7 +1736,7 @@ def fusion_branch_processing(dataset_metadata_obj):
 			used_mem_last_iter = initial_mem_usage
 			last_fused_path = ""
 			last_raw_transformed_paths = []
-			for tp_index, tp in enumerate(selected_timepoints):
+			for tp_index, tp in enumerate(timpoints_to_fuse):
 				fused_save_path =  os.path.join(fusion_output_dir, "deconv_weighted_fused_tp_%s.tif" % tp)
 				logging_broadcast("Fusing timepoint %s" % tp)
 				if os.path.exists(fused_save_path) or os.path.exists(fused_save_path + "f"):
@@ -1777,6 +1778,8 @@ def fusion_branch_processing(dataset_metadata_obj):
 					start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
 					if get_tiffs_in_directory(temp_dir_fusion) == []:
 						shutil.rmtree(temp_dir_fusion)
+					else:
+						logging_broadcast("WARNING: some TIFF files are left in the cache dir! %s" % temp_dir_fusion)
 					return True
 				time.sleep(1)
 			logging_broadcast("ERROR: reached timeout on waiting for the last fused timepoint.")
