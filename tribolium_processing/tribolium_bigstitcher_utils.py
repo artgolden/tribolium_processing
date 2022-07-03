@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import xml.etree.ElementTree as ET
 
 
@@ -15,6 +16,19 @@ def save_tiff_simple(image, path):
         os.remove(path)
     fs = FileSaver(image)
     fs.saveAsTiff(path)
+
+def logging_broadcast(string):
+	print(string)
+	logging.info(string)
+
+def check_if_files_are_present_and_equal_size(file_list):
+    for path in file_list:
+        if not os.path.exists(path):
+            return False
+        sizes = [os.path.getsize(path) / 100 for path in file_list]
+        if len(set(sizes)) > 1:
+            return False
+    return True
 
 
 ###### Bigstitcher 
@@ -157,14 +171,41 @@ def save_transformed_psfs(dataset_xml_path, transformed_psf_dir, timepoint, num_
 
 
 def save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, timepoint, num_angles):
+    """Extract raw transformed according to registration stacks using BigStitcher Fuse method. 
+    Guaranties that the stacks have been written to disk, otherwise fails and returns False.
+
+    Args:
+        dataset_xml_path (str): path to dataset xml
+        temp_dir_fusion (str): path to cache directory which is supposed to be fast storage
+        timepoint (int): timepoint to extract raw transformed stacks from
+        num_angles (int): number of angles(views) that is going to be extracted
+
+    Returns:
+        list[str]: list of paths to raw transformed stacks
+        OR
+        False: if reached timeout on waiting for BigStitcher to extract the stacks
+    """
     xml_path = os.path.join(temp_dir_fusion, "raw_registered_cropped.xml")
     raw_transformed_paths = [os.path.join(temp_dir_fusion, "fused_tp_%s_vs_%s.tif" % (timepoint, angle)) for angle in range(num_angles)]
     if all([os.path.exists(path) for path in raw_transformed_paths]):
         print("Found files for raw transformed stacks for the timepoint: %s Skipping raw transformed stacks creation." % timepoint) 
         return raw_transformed_paths
+    
     # IJ.run("Fuse dataset ...", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_timepoint=[Timepoint %s] bounding_box=embryo_cropped downsampling=1 pixel_type=[32-bit floating point] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend produce=[Each view] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, timepoint, xml_path))
     fuse_run_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_timepoint=[Timepoint %s] bounding_box=embryo_cropped downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] produce=[Each view] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, timepoint, xml_path)
     logging.info("Extracting raw transformed stack. Run string: %s" % fuse_run_string)
     IJ.run("Fuse dataset ...", fuse_run_string)
+
+
+    timeout = 1200
+    while check_if_files_are_present_and_equal_size(raw_transformed_paths) == False:
+        time.sleep(1)
+        if timeout % 10 == 0:
+            logging.info("Waiting for the raw transformed stacks to be created")
+        timeout -= 1
+        if timeout < 0:
+            logging_broadcast("ERROR: Reached timeout on waiting for raw transformed stacks to be extracted.")
+            return False
+    logging.info("Finished extracting raw transformed stacks.")
 
     return raw_transformed_paths

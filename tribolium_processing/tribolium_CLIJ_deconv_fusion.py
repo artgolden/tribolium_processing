@@ -24,14 +24,21 @@ convert = convert
 # - Check where 32-bit conversion is not needed
 # - find CLIJ conversion to float
 
+
+from datetime import datetime
 import timeit
 import os
+import logging
 from ij import IJ, ImagePlus
 from ij.io import FileSaver
 from net.haesleinhuepf.clijx import CLIJx
 from net.haesleinhuepf.clij.clearcl import ClearCLBuffer
 from net.haesleinhuepf.clijx.plugins import DeconvolveRichardsonLucyFFT
 
+
+def logging_broadcast(string):
+	print(string)
+	logging.info(string)
 
 
 def save_tiff_simple(image, path):
@@ -80,7 +87,7 @@ def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs
 
     # Weight views
     for i, psf in zip(range(n_views), transformed_psfs_gpu):
-        print("Deconvolving %s view" % i)
+        logging_broadcast("Deconvolving %s view" % i)
         view = clijx.convert(views[i], ClearCLBuffer)
         clijx.release(buffer2)
         DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, view, psf, buffer1, num_iterations, 0.0, False)
@@ -106,26 +113,50 @@ def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs
 
     deconv_fused_image = clijx.pull(output)
 
-    print("Deconvolution+content-based fusion took: %s ms" % round((timeit.default_timer() - start_time) * 1000, 1))
-    print(clijx.reportMemory())
+    logging_broadcast("Deconvolution+content-based fusion took: %s ms" % round((timeit.default_timer() - start_time) * 1000, 1))
+    logging_broadcast(clijx.reportMemory())
     # clean up
     clijx.clear()
 
     return deconv_fused_image
 
 
-views = []
-for psf_path in views_paths.split(";"):
-    views.append(IJ.openImage(unicode(psf_path)))
+views_dir = os.path.dirname(views_paths.split(";")[0])
 
+
+
+def get_dt_string():
+    now = datetime.now()
+    return now.strftime("%Y-%b-%d-%H%M%S")
+
+dt_string = get_dt_string()
+logging.basicConfig(filename=os.path.join(views_dir, "%s-TribFuse_CLIJ_deconv_fusion.log" % dt_string),
+                    filemode='w',
+                    format='%(asctime)s-%(levelname)s - %(message)s',
+                    datefmt='%d-%b-%y %H:%M:%S',
+                    level=logging.INFO)
+
+logging_broadcast("Loading views")
+start_time = timeit.default_timer()
+views = []
+for view_path in views_paths.split(";"):
+    views.append(IJ.openImage(unicode(view_path)))
+logging_broadcast("Loading views took: %s s" % round((timeit.default_timer() - start_time), 3))
+
+logging_broadcast("Loading psfs")
 transformed_psfs = []
 for psf_path in psfs_paths.split(";"):
     transformed_psfs.append(IJ.openImage(unicode(psf_path)))
 
 
 
+logging_broadcast("Starting deconvolution+fusion")
 deconv_fused_image = deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs, num_iterations=num_deconv_iter)
+
+logging_broadcast("Converting output to 16-bit")
 deconv_fused_image = ds.create(ops.run("convert.uint16", deconv_fused_image))
 fused_imp = convert.convert(deconv_fused_image, ImagePlus)
+
+logging_broadcast("Saving the output image")
 save_tiff_simple(fused_imp, unicode(fused_output_path))
 

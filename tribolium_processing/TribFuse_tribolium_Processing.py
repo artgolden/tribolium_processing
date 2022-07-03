@@ -43,12 +43,10 @@ import logging
 from datetime import datetime
 import shutil
 import subprocess
-from tempfile import tempdir
 import time
 import traceback
 import sys
 import uuid
-import timeit
 
 
 
@@ -96,6 +94,7 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - make Process spawning work for Linux as well
 # - Add documentation to functions
 # - do projections and montages from fused data
+
 
 EXAMPLE_JSON_METADATA_FILE = """
 Example JSON metadata file contents:
@@ -337,6 +336,15 @@ def start_moving_files(file_paths, destination_dir):
 		logging.info("Started move process of the file %s to %s" % (path, destination_dir))
 		move_command = ["move", path, destination_dir]
 		p = subprocess.Popen(move_command, shell=True)
+
+def check_until_timeout_if_file_is_present(file_path, timeout=600):
+	for t in range(timeout):
+		if os.path.exists(file_path):
+			return True
+		time.sleep(1)
+		if t % 10 == 0:
+			logging.info("Waiting for the file to be created. %s" % file_path)
+	return False
 
 
 #						B-branch functions
@@ -957,7 +965,8 @@ def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, ti
 	allowed_error_for_ransac = 2
 	number_of_ransac_iterations = "Normal"
 
-
+	if os.path.exists(dataset_xml):
+		os.rename(dataset_xml, dataset_xml + "_previous_run_backup_copy_" + uuid.uuid4().hex)
 
 	define_string = "define_dataset=[Manual Loader (TIFF only, ImageJ Opener)] project_filename=%s multiple_timepoints=[YES (one file per time-point)] multiple_channels=[NO (one channel)] _____multiple_illumination_directions=[NO (one illumination direction)] multiple_angles=[YES (one file per angle)] multiple_tiles=[NO (one tile)] image_file_directory=%s image_file_pattern=%s timepoints_=%s acquisition_angles_=%s-%s calibration_type=[Same voxel-size for all views] calibration_definition=[User define voxel-size(s)] imglib2_data_container=[ArrayImg (faster)] pixel_distance_x=%s pixel_distance_y=%s pixel_distance_z=%s pixel_unit=um" % (dataset_xml_name, 
 																					dataset_dir, 
@@ -1750,15 +1759,28 @@ def fusion_branch_processing(dataset_metadata_obj):
 
 				logging_broadcast("Saving raw transformed stacks")
 				raw_transformed_paths = save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, tp, dataset_metadata_obj.number_of_directions)
+				if raw_transformed_paths == False:
+					logging_broadcast("ERROR: failed to extract raw transformed stacks. Skipping the dataset.")
+					return False
+
 				if tp_index > 0:
-					logging_broadcast("Checking wheather last timepoint has fused successfully. Expected path: %s  Is file present: %s " % (last_fused_path, os.path.exists(last_fused_path)))
-					if last_fused_path != "skipped" and not os.path.exists(last_fused_path):
+					is_last_fused_timepoint_present = False
+					
+					if last_fused_path == "skipped":
+						is_last_fused_timepoint_present = True
+					else:					
+						last_fused_tp_timeout = 600
+						logging.info("Checking whether last fused timepoint is present. %s with timeout %s" % (last_fused_path, last_fused_tp_timeout))
+						is_last_fused_timepoint_present = check_until_timeout_if_file_is_present(last_fused_path, timeout=last_fused_tp_timeout)
+
+					logging_broadcast("Checking wheather last timepoint has fused successfully. Expected path: %s  Is file present: %s " % (last_fused_path, is_last_fused_timepoint_present))
+					if is_last_fused_timepoint_present == True:
+						logging_broadcast("Started moving raw aligned stack for previous fused timepoint.")
+						start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
+					else:
 						logging_broadcast("ERROR: Prevous timepoint fusion was not generated for some reason. Exiting pipeline!")
 						message = "Pipeline for folder: %s Has experienced fatal error on the Dataset: %s. Pipeline exiting." % (dataset_metadata_obj.datasets_dir, dataset_metadata_obj.id)
 						send_notification_and_exit(message)
-					if os.path.exists(last_fused_path):
-						logging_broadcast("Started moving raw aligned stack for previous fused timepoint.")
-						start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
 
 
 				logging_broadcast("Starting deconvolution->fusion of the timepoint with params raw_transformed_paths: %s psf_paths: %s fused_save_path: %s NUM_DECONV_ITERATIONS: %s" % (raw_transformed_paths, psf_paths, fused_save_path, NUM_DECONV_ITERATIONS))
