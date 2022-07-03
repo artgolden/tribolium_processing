@@ -88,12 +88,14 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
 # this is very slow. Probably need to switch to some other way of manually defining min/max.
 # - Check whether B-branch uses max projections stack cache (yes it does, need to put it in the Docs)
-# - Do more proper checking of the already made PSFs for fusion, need to check that all have been assigned
+# - Do more proper checking of the already made PSFs for fusion, need to check that all have been assigned. Already stubled into this, really need to do this.
 # - Add a lot more logging to fusion branch. log all bigstitcher commands?
 # - restart and log stdout from CLIJ fusion process if it has failed 1 time
 # - make Process spawning work for Linux as well
 # - Add documentation to functions
 # - do projections and montages from fused data
+# - extract downsampled timepoint fusion in a separate function and skip it if some fused timepoints have already been created
+# - Add to telegram-send Docs info about the config file for each user
 
 
 EXAMPLE_JSON_METADATA_FILE = """
@@ -1773,7 +1775,6 @@ def fusion_branch_processing(dataset_metadata_obj):
 						logging.info("Checking whether last fused timepoint is present. %s with timeout %s" % (last_fused_path, last_fused_tp_timeout))
 						is_last_fused_timepoint_present = check_until_timeout_if_file_is_present(last_fused_path, timeout=last_fused_tp_timeout)
 
-					logging_broadcast("Checking wheather last timepoint has fused successfully. Expected path: %s  Is file present: %s " % (last_fused_path, is_last_fused_timepoint_present))
 					if is_last_fused_timepoint_present == True:
 						logging_broadcast("Started moving raw aligned stack for previous fused timepoint.")
 						start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
@@ -1796,12 +1797,19 @@ def fusion_branch_processing(dataset_metadata_obj):
 				last_raw_transformed_paths = raw_transformed_paths
 			for sec in range(400):
 				if os.path.exists(last_fused_path):
+
 					logging_broadcast("Started moving raw aligned stack for the last timepoint.")
 					start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
-					if get_tiffs_in_directory(temp_dir_fusion) == []:
-						shutil.rmtree(temp_dir_fusion)
-					else:
-						logging_broadcast("WARNING: some TIFF files are left in the cache dir! %s" % temp_dir_fusion)
+					
+					for sec in range(300):
+						if get_tiffs_in_directory(temp_dir_fusion) == []:
+							shutil.rmtree(temp_dir_fusion)
+							return True
+						if sec % 10 == 0:
+							logging.info("Waiting for last TIFF files to be transfered from the cache dir.")
+						time.sleep(1)
+					
+					logging_broadcast("WARNING: some TIFF files are left in the cache dir! %s" % temp_dir_fusion)
 					return True
 				time.sleep(1)
 			logging_broadcast("ERROR: reached timeout on waiting for the last fused timepoint.")
