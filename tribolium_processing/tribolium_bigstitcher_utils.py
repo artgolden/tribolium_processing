@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -7,6 +8,10 @@ import xml.etree.ElementTree as ET
 
 from ij import IJ, WindowManager
 from ij.io import FileSaver
+
+from java.lang.System import getProperty
+sys.path.append(os.path.join(getProperty("fiji.dir"), "plugins", "tribolium_processing")) 
+from tribolium_file_utils import *
 
 
 # small Utils
@@ -32,6 +37,30 @@ def check_if_files_are_present_and_equal_size(file_list):
 
 
 ###### Bigstitcher 
+
+def get_timepoint_list_from_xml(xml_path):
+    if not os.path.exists(xml_path):
+        return False
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    timepoints = []
+    for timepoint_list_elem in root.findall("./SequenceDescription/Timepoints/integerpattern"):
+        if timepoint_list_elem.text == None: 
+            return [0]
+        timepoints = [int(x) for x in timepoint_list_elem.text.split(",")]
+    return timepoints
+
+def check_whether_timepoint_view_has_psf_in_xml(xml_path, timepoint, view):
+    if not os.path.exists(xml_path):
+        return False
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    timepoints = []
+     
+    if root.findall("./PointSpreadFunctions/BoundingBoxDefinition[@timepoint='%s'][@setup='%s']" % (timepoint, view)) == []:
+        return False
+    else:
+        return True
 
 def get_fusion_tranformation_from_xml_file(xml_path):
     tree = ET.parse(xml_path)
@@ -113,9 +142,30 @@ def fuse_dataset_to_tiff(dataset_xml_path, bounding_box_name, fused_xml_path, us
     use_weighted = ""
     if use_entropy_weighted_fusion:
         use_weighted = " use "
-    IJ.run(
-    "Fuse dataset ...",
-    "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend%s produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, bounding_box_name, use_weighted, fused_xml_path))
+
+    fused_dir = os.path.dirname(fused_xml_path)
+    fused_tiff_names_in_dir = [os.path.basename(path) for path in get_tiffs_in_directory(fused_dir) if "fused_tp_" in path]
+    already_fused_timepoints = [int(filename.split("_")[2]) for filename in fused_tiff_names_in_dir]
+    all_timepoints_in_datset = get_timepoint_list_from_xml(dataset_xml_path)
+    timepoints_left_to_fuse = [tp for tp in all_timepoints_in_datset if tp not in already_fused_timepoints]
+
+    if timepoints_left_to_fuse == []:
+        logging_broadcast("Found previously fused timepoints, No timepoints left to fuse!")
+        return True
+    if timepoints_left_to_fuse == all_timepoints_in_datset:
+        timepoint_selection_string = "[All Timepoints]"
+    else:
+        logging_broadcast("Found previously fused timepoints, skipping them: %s" % already_fused_timepoints)
+        timepoints_string = " ".join(["timepoint_%s" % tp for tp in timepoints_left_to_fuse])
+        timepoint_selection_string = "[Multiple Timepoints (Select from List)] " + timepoints_string + " "
+    
+    fusion_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=%s bounding_box=%s downsampling=1 pixel_type=[16-bit unsigned integer] interpolation=[Linear Interpolation] image=[Precompute Image] interest_points_for_non_rigid=[-= Disable Non-Rigid =-] blend%s produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] export_path=%s" % (dataset_xml_path, timepoint_selection_string, bounding_box_name, use_weighted, fused_xml_path)
+    
+    logging.info("Running fusion with following parameters\n %s" % fusion_string)
+    IJ.run("Fuse dataset ...", fusion_string)
+    return True
+     
+    
 
 def extract_psf(dataset_xml_path, timepoint=1):
     IJ.run("Extract PSFs", "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[Single Timepoint (Select from List)] processing_timepoint=[Timepoint %s] interest_points=beads use_corresponding remove_min_intensity_projections_from_psf psf_size_x=19 psf_size_y=19 psf_size_z=15" % (dataset_xml_path, timepoint))
@@ -143,7 +193,27 @@ def deconvolve_dataset_to_tiff(dataset_xml_path,
                                          abs(box_dims["y_min"] - box_dims["y_max"]) + 1,
                                          abs(box_dims["z_min"] - box_dims["z_max"]) + 1,
                                          )
-    deconv_run_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] bounding_box=%s downsampling=1 input=[Precompute Image] weight=[Precompute Image] initialize_with=[Blurred, fused image (suggested, higher compute effort)] type_of_iteration=[Efficient Bayesian - Optimization I (fast, precise)] fast_sequential_iterations osem_acceleration=1 number_of_iterations=%s use_tikhonov_regularization tikhonov_parameter=0.0060 compute=[in 512x512x512 blocks] compute_on=%s produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] %s %s export_path=%s" % (dataset_xml_path,                 box_string, 
+
+    fused_dir = os.path.dirname(fused_xml_path)
+    fused_tiff_names_in_dir = [os.path.basename(path) for path in get_tiffs_in_directory(fused_dir) if "fused_tp_" in path]
+    already_fused_timepoints = [int(filename.split("_")[2]) for filename in fused_tiff_names_in_dir]
+    all_timepoints_in_datset = get_timepoint_list_from_xml(dataset_xml_path)
+    timepoints_left_to_fuse = [tp for tp in all_timepoints_in_datset if tp not in already_fused_timepoints]
+
+    if timepoints_left_to_fuse == []:
+        logging_broadcast("Found previously fused timepoints, No timepoints left to fuse!")
+        return True
+    if timepoints_left_to_fuse == all_timepoints_in_datset:
+        timepoint_selection_string = "[All Timepoints]"
+    else:
+        logging_broadcast("Found previously fused timepoints, skipping them: %s" % already_fused_timepoints)
+        timepoints_string = " ".join(["timepoint_%s" % tp for tp in timepoints_left_to_fuse])
+        timepoint_selection_string = "[Multiple Timepoints (Select from List)] " + timepoints_string + " "
+    
+    deconv_run_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=%s bounding_box=%s downsampling=1 input=[Precompute Image] weight=[Precompute Image] initialize_with=[Blurred, fused image (suggested, higher compute effort)] type_of_iteration=[Efficient Bayesian - Optimization I (fast, precise)] fast_sequential_iterations osem_acceleration=1 number_of_iterations=%s use_tikhonov_regularization tikhonov_parameter=0.0060 compute=[in 512x512x512 blocks] compute_on=%s produce=[Each timepoint & channel] fused_image=[Save as new XML Project (TIFF)] %s %s export_path=%s" % (
+                dataset_xml_path, 
+                timepoint_selection_string,
+                box_string, 
                 number_deconv_iterations, 
                 compute_on, 
                 cuda_directory,

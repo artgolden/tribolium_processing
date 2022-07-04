@@ -29,7 +29,7 @@
 
 # Written by Artemiy Golden on Jan 2022 at AK Stelzer Group at Goethe Universitaet Frankfurt am Main
 # For detailed documentation go to https://github.com/artgolden/tribolium_processing or read the README.md
-# Last manual update of this line 2022.6.30 :)
+# Last manual update of this line 2022.7.4 :)
 
 from collections import namedtuple
 from copy import deepcopy
@@ -94,7 +94,6 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - make Process spawning work for Linux as well
 # - Add documentation to functions
 # - do projections and montages from fused data
-# - extract downsampled timepoint fusion in a separate function and skip it if some fused timepoints have already been created
 # - Add to telegram-send Docs info about the config file for each user
 
 
@@ -253,6 +252,7 @@ class DatasetMetadata:
 	planes_to_keep_per_direction_b_branch = None
 	tp_selected_to_fuse = False
 	raw_aligned_stacks_dir = ""
+	example_raw_filename = None
 
 	def __init__(
 				self, 
@@ -333,10 +333,10 @@ def get_free_memory_in_GB():
 	free_mem = round(float(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024 / 1024 / 1024, 3)
 	return free_mem
 
-def start_moving_files(file_paths, destination_dir):
-	for path in file_paths:
-		logging.info("Started move process of the file %s to %s" % (path, destination_dir))
-		move_command = ["move", path, destination_dir]
+def start_moving_files(file_paths, destination_paths):
+	for source, destination in zip(file_paths, destination_paths):
+		logging.info("Started move process of the file %s to %s" % (source, destination))
+		move_command = ["move", source, destination]
 		p = subprocess.Popen(move_command, shell=True)
 
 def check_until_timeout_if_file_is_present(file_path, timeout=600):
@@ -955,9 +955,8 @@ def upscale_translation_matrix(matrix, downsampling_factor_XY):
 	upscaled_matrix[2][3] = upscaled_matrix[2][3] * downsampling_factor_XY
 	return upscaled_matrix
 
-def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, timepoints_list, angles_from_to, calibration_pixel_distances, reference_timepoint=1):
-	dataset_xml_name = "%s.xml" % dataset_name
-	dataset_xml = os.path.join(dataset_dir, "%s.xml" % dataset_name)
+def create_and_register_full_dataset(dataset_dir, dataset_xml_filename, file_pattern, timepoints_list, angles_from_to, calibration_pixel_distances, reference_timepoint=1):
+	dataset_xml_path = os.path.join(dataset_dir, dataset_xml_filename)
 	sigma = 2.0
 	threshold = 0.01
 	max_detections_per_view = 1000
@@ -967,10 +966,10 @@ def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, ti
 	allowed_error_for_ransac = 2
 	number_of_ransac_iterations = "Normal"
 
-	if os.path.exists(dataset_xml):
-		os.rename(dataset_xml, dataset_xml + "_previous_run_backup_copy_" + uuid.uuid4().hex)
+	if os.path.exists(dataset_xml_path):
+		os.rename(dataset_xml_path, dataset_xml_path + "_previous_run_backup_copy_" + uuid.uuid4().hex)
 
-	define_string = "define_dataset=[Manual Loader (TIFF only, ImageJ Opener)] project_filename=%s multiple_timepoints=[YES (one file per time-point)] multiple_channels=[NO (one channel)] _____multiple_illumination_directions=[NO (one illumination direction)] multiple_angles=[YES (one file per angle)] multiple_tiles=[NO (one tile)] image_file_directory=%s image_file_pattern=%s timepoints_=%s acquisition_angles_=%s-%s calibration_type=[Same voxel-size for all views] calibration_definition=[User define voxel-size(s)] imglib2_data_container=[ArrayImg (faster)] pixel_distance_x=%s pixel_distance_y=%s pixel_distance_z=%s pixel_unit=um" % (dataset_xml_name, 
+	define_string = "define_dataset=[Manual Loader (TIFF only, ImageJ Opener)] project_filename=%s multiple_timepoints=[YES (one file per time-point)] multiple_channels=[NO (one channel)] _____multiple_illumination_directions=[NO (one illumination direction)] multiple_angles=[YES (one file per angle)] multiple_tiles=[NO (one tile)] image_file_directory=%s image_file_pattern=%s timepoints_=%s acquisition_angles_=%s-%s calibration_type=[Same voxel-size for all views] calibration_definition=[User define voxel-size(s)] imglib2_data_container=[ArrayImg (faster)] pixel_distance_x=%s pixel_distance_y=%s pixel_distance_z=%s pixel_unit=um" % (dataset_xml_filename, 
 																					dataset_dir, 
 																					file_pattern, 
 																					timepoints_list, 
@@ -985,15 +984,15 @@ def create_and_register_full_dataset(dataset_dir, dataset_name, file_pattern, ti
 		"Define dataset ...", define_string)
 
 	# use_same_min parameter is very important. If you do not use same min max intensity, point detection will not work for low intensity datasets
-	detect_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads limit_amount_of_detections subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima maximum_number=%s type_of_detections_to_use=Brightest compute_on=[CPU (Java)]" % (dataset_xml, sigma, threshold, max_detections_per_view)
+	detect_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] type_of_interest_point_detection=Difference-of-Gaussian label_interest_points=beads limit_amount_of_detections subpixel_localization=[3-dimensional quadratic fit] interest_point_specification=[Advanced ...] downsample_xy=[Match Z Resolution (less downsampling)] downsample_z=1x use_same_min sigma=%s threshold=%s find_maxima maximum_number=%s type_of_detections_to_use=Brightest compute_on=[CPU (Java)]" % (dataset_xml_path, sigma, threshold, max_detections_per_view)
 	logging.info("Detecting interest points of the full dataset: " + detect_string)
 	IJ.run("Detect Interest Points for Pairwise Registration", detect_string)
 
-	register_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s" % (dataset_xml, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations)
+	register_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s" % (dataset_xml_path, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations)
 	logging.info("Registering individual timepoints of the full dataset: " + register_string)
 	IJ.run("Register Dataset based on Interest Points",register_string)
 
-	register_to_1_tp_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Match against one reference timepoint (no global optimization)] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads reference=%s consider_each_timepoint_as_rigid_unit transformation=Translation regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=1 significance=10 allowed_error_for_ransac=2 number_of_ransac_iterations=Normal interestpoint_grouping=[Group interest points (simply combine all in one virtual view)] interest=5" % (dataset_xml, reference_timepoint)
+	register_to_1_tp_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Match against one reference timepoint (no global optimization)] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads reference=%s consider_each_timepoint_as_rigid_unit transformation=Translation regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=1 significance=10 allowed_error_for_ransac=2 number_of_ransac_iterations=Normal interestpoint_grouping=[Group interest points (simply combine all in one virtual view)] interest=5" % (dataset_xml_path, reference_timepoint)
 	logging.info("Registering timepoints to tp %s of the full dataset: %s" % (reference_timepoint, register_to_1_tp_string))
 	IJ.run("Register Dataset based on Interest Points", register_to_1_tp_string)
 
@@ -1034,6 +1033,73 @@ def get_timepoint_list_from_folder(dir_path, selected_timepoints=False):
 			logging_broadcast("WARNING: not all timepoints selected for fusion were found. Using timepoints: %s" % timepoints)
 	return timepoints 
 
+def fuse_segment_downsampled_ref_timepoint(dataset_metadata_obj, reference_timepoint, raw_direction_dirs):
+	downsampled_dir = os.path.join(dataset_metadata_obj.root_dir, "downsampled_%s_timepoint" % reference_timepoint)
+	if not os.path.exists(downsampled_dir):
+		mkpath(downsampled_dir)
+
+	cropped_projections_dir = os.path.join(dataset_metadata_obj.datasets_dir, "cropped_fused_projections")
+	if not os.path.exists(cropped_projections_dir):
+		mkpath(cropped_projections_dir)
+
+	view_image_filename = dataset_metadata_obj.example_raw_filename
+	view_image_filename.time_point = "%04d" % reference_timepoint
+
+	# Downsample reference timepoint to a new folder
+	logging_broadcast("Downsampling images for fusion+segmentation")
+	for direction, direction_dir in zip(range(1, dataset_metadata_obj.number_of_directions + 1), raw_direction_dirs):
+		view_image_filename.direction = "%04d" % (direction + 1)
+		next_downsampled_image_path = os.path.join(downsampled_dir, view_image_filename.get_name())
+
+		view_image_filename.direction = "%04d" % direction
+		downsampled_image_path = os.path.join(downsampled_dir, view_image_filename.get_name())
+
+		if os.path.exists(downsampled_image_path) and os.path.exists(next_downsampled_image_path): 
+			# We cannot guarantee that last downsampled file was finished if the pipeline crashed previously, so always redo it
+			logging_broadcast("Found existing file %s, skipping downsampling." % downsampled_image_path)
+			continue
+
+		full_image_path = os.path.join(direction_dir, view_image_filename.get_name())
+		full_image = IJ.openImage(full_image_path)
+		downsampled_image = downsample_image_stack(full_image, full_image.getWidth() / IMAGE_DOWNSAMPLING_FACTOR_XY)
+		fs = FileSaver(downsampled_image)
+		fs.saveAsTiff(downsampled_image_path)
+
+	# Fuse downsampled reference timepoint
+	view_dims = get_image_dimensions_from_file(os.path.join(downsampled_dir, view_image_filename.get_name()))
+	fuse_file_pattern = view_image_filename
+	fuse_file_pattern.direction = "{aaaa}"
+	logging_broadcast("DS%04d Fusing downsampled %s timepoint as reference" % (dataset_metadata_obj.id, reference_timepoint))
+	if not DEBUG_USE_FUSED_PREVIEW_CACHE:
+		create_and_fuse_preview_dataset(downsampled_dir, fuse_file_pattern.get_name(), (1, dataset_metadata_obj.number_of_directions), view_dims)
+
+	fused_file_path = os.path.join(downsampled_dir, "fused_tp_0_ch_0.tif")
+
+	fused_stack = IJ.openImage(fused_file_path)
+	z_projection = tribolium_image_utils.project_image(fused_stack, "Z", "Max")
+	y_projection = tribolium_image_utils.project_image(fused_stack, "Y", "Max")
+
+	logging_broadcast("Segmenting downsampled and fusing cropped embryo")
+	zy_cropped_projections, segmentation_results = segment_embryo_and_fuse_again_cropping_around_embryo(
+														raw_dataset_xml_path=os.path.join(downsampled_dir, "dataset.xml"),
+														fused_xml_path=os.path.join(downsampled_dir, "fused.xml"),
+														z_projection=z_projection,
+														y_projection=y_projection)
+	
+	# Save ZY cropped projection montages
+	if zy_cropped_projections == False:
+		logging_broadcast("segment_embryo_and_fuse_again_cropping_around_embryo Failed. Exiting Fusion-branch.")
+		return False
+	IJ.setBackgroundColor(255, 255, 255)
+	IJ.run(zy_cropped_projections, "Canvas Size...", "width=%s height=%s position=Center" % (CANVAS_SIZE_FOR_EMBRYO_PREVIEW, CANVAS_SIZE_FOR_EMBRYO_PREVIEW))
+	zy_projections_filename = view_image_filename
+	zy_projections_filename.direction = "z+yM"
+	zy_projections_external_path = os.path.join(cropped_projections_dir, zy_projections_filename.get_name_without_extension() + "_montage.tif")
+	zy_projections_meta_path = os.path.join(dataset_metadata_obj.root_dir, METADATA_DIR_NAME, zy_projections_filename.get_name_without_extension() + "_montage.tif")
+	save_tiff(zy_cropped_projections, zy_projections_external_path)
+	save_tiff(zy_cropped_projections, zy_projections_meta_path)
+	return segmentation_results
+
 def start_deconv_fuse_timepoint_process(raw_transformed_paths, psf_paths, fused_output_path, num_deconv_iter):
 	fiji_exe = os.path.join(getProperty("fiji.dir"), "ImageJ-win64.exe")
 	script_path = os.path.join(getProperty("fiji.dir"),  "plugins", "tribolium_processing", "tribolium_CLIJ_deconv_fusion.py")
@@ -1047,6 +1113,123 @@ def start_deconv_fuse_timepoint_process(raw_transformed_paths, psf_paths, fused_
 	command = [fiji_exe, '--ij2', '--headless', '--console', '--run', script_path, script_params.replace('\\', '/')]
 	p = subprocess.Popen(command)
 	logging_broadcast("Started CLIJ deconv. fusion process with PID: %s" % p.pid)
+
+def fuse_deconv_CLIJ(dataset_metadata_obj, ch, fusion_setup_folder, fusion_output_dir, dataset_xml_path, reference_timepoint, timepoints_to_fuse):
+	were_all_PSFs_assigned = check_whether_timepoint_view_has_psf_in_xml(dataset_xml_path, max(timepoints_to_fuse), dataset_metadata_obj.number_of_directions - 1)
+
+	if USE_FUSION_DATASET_CACHE and were_all_PSFs_assigned:
+		logging_broadcast("Found 'psf' folder inside dataset setup folder and PSFs for all timepoints are present. Skipping PSF extraction and asignment.")
+	else:	
+		logging_broadcast("Extracting PSF from reference timepoint %s and assigning it to all." % reference_timepoint)
+		extract_psf(dataset_xml_path, reference_timepoint)
+		assign_psf(dataset_xml_path, reference_timepoint)
+
+
+	temp_dir_fusion = os.path.join(CACHING_DIR, "fusion_cache_dir_DS00" + str(dataset_metadata_obj.id) + "_" + os.path.basename(dataset_metadata_obj.datasets_dir))
+	if not os.path.exists(temp_dir_fusion):
+		mkpath(temp_dir_fusion)	
+
+	transformed_psf_dir = os.path.join(fusion_setup_folder, "transformed_psf")
+	if not os.path.exists(transformed_psf_dir):
+		mkpath(transformed_psf_dir)
+
+	logging_broadcast("Starting deconvolution->content-based fusion on the GPU ")
+	initial_mem_usage = get_free_memory_in_GB()
+	used_mem_last_iter = initial_mem_usage
+	last_fused_path = ""
+	last_raw_transformed_paths = []
+	for tp_index, tp in enumerate(timepoints_to_fuse):
+		fused_filename = dataset_metadata_obj.example_raw_filename.get_modified_name(direction="(FU)", channel=ch, time_point=tp, additional_info="DeconContentBasedFusion")
+		fused_save_path =  os.path.join(fusion_output_dir, fused_filename)
+		fused_save_path_old_name =  os.path.join(fusion_output_dir, "deconv_weighted_fused_tp_%s.tif" % tp)
+		logging_broadcast("Fusing timepoint %s" % tp)
+		if os.path.exists(fused_save_path_old_name):
+			logging.info("Renaming fused with old name: %s to %s" % (fused_save_path_old_name, fused_save_path))
+			os.rename(fused_save_path_old_name, fused_save_path)
+		if os.path.exists(fused_save_path) or os.path.exists(fused_save_path + "f"):
+			logging_broadcast("Found previously fused timepoint, skipping.")
+			last_fused_path = "skipped"
+			if tp == timepoints_to_fuse[-1]: # If all timepoints were skipped, exit
+				return True
+			continue
+
+		logging_broadcast("Saving averaged transformed PSFs")
+		psf_paths = save_transformed_psfs(dataset_xml_path, transformed_psf_dir, tp, dataset_metadata_obj.number_of_directions)
+
+
+		logging_broadcast("Saving raw transformed stacks")
+		raw_transformed_paths = save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, tp, dataset_metadata_obj.number_of_directions)
+		if raw_transformed_paths == False:
+			logging_broadcast("ERROR: failed to extract raw transformed stacks. Skipping the dataset.")
+			return False
+		
+		raw_transformed_renamed_paths = []
+		for direction, old_path in enumerate(raw_transformed_paths):
+			direction += 1
+			raw_transformed_FF_file_name = dataset_metadata_obj.example_raw_filename
+			raw_transformed_new_name = raw_transformed_FF_file_name.get_modified_name(direction=direction, channel=ch, time_point=tp, additional_info="AlignedCropped")
+			new_path = os.path.join(os.path.dirname(old_path), raw_transformed_new_name)
+			raw_transformed_renamed_paths.append(new_path)
+			os.rename(old_path, new_path)
+		raw_transformed_paths = raw_transformed_renamed_paths
+
+
+		if tp_index > 0:
+			is_last_fused_timepoint_present = False
+			
+			if last_fused_path == "skipped":
+				is_last_fused_timepoint_present = True
+			else:					
+				last_fused_tp_timeout = 600
+				logging.info("Checking whether last fused timepoint is present. %s with timeout %s" % (last_fused_path, last_fused_tp_timeout))
+				is_last_fused_timepoint_present = check_until_timeout_if_file_is_present(last_fused_path, timeout=last_fused_tp_timeout)
+
+			if is_last_fused_timepoint_present == True:
+				logging_broadcast("Started moving raw aligned stack for previous fused timepoint.")
+				raw_transformed_destination_paths = [os.path.join(dataset_metadata_obj.raw_aligned_stacks_dir, os.path.basename(path)) for path in last_raw_transformed_paths ]
+				start_moving_files(last_raw_transformed_paths, raw_transformed_destination_paths)
+			else:
+				logging_broadcast("ERROR: Prevous timepoint fusion was not generated for some reason. Exiting pipeline!")
+				message = "Pipeline for folder: %s Has experienced fatal error on the Dataset: %s. Pipeline exiting." % (dataset_metadata_obj.datasets_dir, dataset_metadata_obj.id)
+				send_notification_and_exit(message)
+
+
+		logging_broadcast("Starting deconvolution->fusion of the timepoint with params raw_transformed_paths: %s psf_paths: %s fused_save_path: %s NUM_DECONV_ITERATIONS: %s" % (raw_transformed_paths, psf_paths, fused_save_path, NUM_DECONV_ITERATIONS))
+		# Spawning a separate process for fusion and deconvolution because this function leaks memory, and this is the only way to make sure it is released.
+		start_deconv_fuse_timepoint_process(raw_transformed_paths, psf_paths, fused_save_path, NUM_DECONV_ITERATIONS)
+
+		used_mem = get_free_memory_in_GB()
+		logging.info("Used memory growth per iteration: %s Gb" % (used_mem - used_mem_last_iter))
+		logging.info("Used memory growth total: %s Gb" % (used_mem - initial_mem_usage))
+		logging.info("Used memory total: %s Gb" % used_mem)
+
+		
+		used_mem_last_iter = used_mem
+		last_fused_path = fused_save_path
+		last_raw_transformed_paths = raw_transformed_paths
+	for sec in range(400):
+		if os.path.exists(last_fused_path):
+
+			logging_broadcast("Started moving raw aligned stack for the last timepoint.")
+			raw_transformed_destination_paths = [os.path.join(dataset_metadata_obj.raw_aligned_stacks_dir, os.path.basename(path)) for path in last_raw_transformed_paths ]
+			start_moving_files(last_raw_transformed_paths, raw_transformed_destination_paths)
+			
+			for sec in range(300):
+				if get_tiffs_in_directory(temp_dir_fusion) == []:
+					shutil.rmtree(temp_dir_fusion)
+					return True
+				if sec % 10 == 0:
+					logging.info("Waiting for last TIFF files to be transfered from the cache dir.")
+				time.sleep(1)
+			
+			logging_broadcast("WARNING: some TIFF files are left in the cache dir! %s" % temp_dir_fusion)
+			return True
+		time.sleep(1)
+		if sec % 10 == 0:
+			logging.info("Waiting for the last timepoint to be fused. Waited: %s" % sec)
+	logging_broadcast("ERROR: reached timeout on waiting for the last fused timepoint.")
+	return False
+
 
 #						Pipeline helper functions
 
@@ -1179,7 +1362,7 @@ def send_notification_and_exit(message, do_exit=True):
 		logging_broadcast("Sending notification to Telegram bot and exiting. Message: %s" % message)
 		p = subprocess.Popen(command)
 	else:
-		logging.info("WARNING: could not find Telegram bot notifications executable at: %s. Skipping notifications." % bot_notifications_exe)
+		logging_broadcast("WARNING: could not find Telegram bot notifications executable at: %s. Skipping notifications." % bot_notifications_exe)
 	if do_exit: 
 		exit(1)
 
@@ -1187,7 +1370,7 @@ def send_notification_and_exit(message, do_exit=True):
 
 #					Pipeline main process functions
 
-def move_files(raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix):
+def move_raw_files_to_organised(raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix):
 	"""Splits the embryo images by direction and puts in separate channel/direction folders. 
 	Renames the files to conform to FredericFile format.
 
@@ -1387,9 +1570,8 @@ def b_branch_processing(dataset_metadata_obj):
 					max_time_proj, m_dir, dataset_metadata_obj, dataset_minimal_crop_box_dims, use_dataset_box_dims=True)
 			except Exception as e:
 				traceback.print_exc()
-				logging.info(
+				logging_broadcast(
 					"ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
-				print("ERROR: Encountered an exception while trying to create a crop template. Skipping the dataset. Exception:\n%s" % e)
 				return False
 			fs = FileSaver(cropped_max_time_proj)
 			fs.saveAsTiff(os.path.join(
@@ -1457,11 +1639,8 @@ def b_branch_processing(dataset_metadata_obj):
 						try:
 							planes_kept = find_planes_to_keep(stack_for_finding_planes, m_dir, manual_planes_to_keep)
 						except Exception as e:
-							logging.info("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
+							logging_broadcast("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
 								channel, direction, e))
-							print("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
-								channel, direction, e))
-							print("Encountered an exception while trying to find which planes to keep. Skipping the dataset B-branch.")
 							return False
 						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
 									(channel, direction, planes_kept))
@@ -1571,80 +1750,33 @@ def fusion_branch_processing(dataset_metadata_obj):
 	raw_img_ch_1_dir = os.path.join(dataset_metadata_obj.raw_images_dir_path, "CH0001")
 	raw_direction_dirs = get_directions_dirs_for_folder(raw_img_ch_1_dir, dataset_metadata_obj.number_of_directions)
 	example_raw_filename = get_any_tiff_name_from_dir(raw_direction_dirs[0])
-	timpoints_to_fuse = get_timepoint_list_from_folder(raw_direction_dirs[0], dataset_metadata_obj.tp_selected_to_fuse)
-	if timpoints_to_fuse == False:
+	dataset_metadata_obj.example_raw_filename = example_raw_filename
+	timepoints_to_fuse = get_timepoint_list_from_folder(raw_direction_dirs[0], dataset_metadata_obj.tp_selected_to_fuse)
+	if timepoints_to_fuse == False:
 		logging.info("Parsed timepoint list: dataset_metadata_obj.tp_selected_to_fuse = %s" % dataset_metadata_obj.tp_selected_to_fuse)
 		logging_broadcast("ERROR: Could not extract timepoint file list. Skipping dataset.")
 		return False
-	reference_timepoint = min(timpoints_to_fuse)
+	reference_timepoint = min(timepoints_to_fuse)
 
+	skip_to_fusion_FLAG = False
+	channel_1_fusion_folder = os.path.join(dataset_metadata_obj.root_dir, FUSED_DIR_NAME, "CH0001")
+	skip_to_fusion_FLAG = USE_FUSION_DATASET_CACHE and os.path.exists(channel_1_fusion_folder) and get_tiffs_in_directory(channel_1_fusion_folder) != []
 
+	if skip_to_fusion_FLAG:
+		logging_broadcast("Found a TIFF file in the fusion directory for channel 1: %s. Skipping to fusion." % channel_1_fusion_folder)
+	else:
+		segmentation_results = fuse_segment_downsampled_ref_timepoint(dataset_metadata_obj, reference_timepoint, raw_direction_dirs)
+		if segmentation_results == False:
+			logging_broadcast("ERROR: fuse_segment_downsampled_ref_timepoint failed. Exiting Fusion-branch.")
+			return False
+		upscaled_translation_embryo_to_center = upscale_translation_matrix(segmentation_results.transformation_embryo_to_center, IMAGE_DOWNSAMPLING_FACTOR_XY)
+		upscaled_bounding_box = upscale_bounding_box(segmentation_results.embryo_crop_box, IMAGE_DOWNSAMPLING_FACTOR_XY, (IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z))
+		upscaled_vertical_box = rotate_bounding_box_vertically(upscaled_bounding_box)
+		
+		logging.info("Upscaled matrix for embryo translation to center: %s" % upscaled_translation_embryo_to_center)
+		logging.info("Upscaled bounding box for embryo cropping: %s" % upscaled_bounding_box)
 
-
-	downsampled_dir = os.path.join(dataset_metadata_obj.root_dir, "downsampled_%s_timepoint" % reference_timepoint)
-	if not os.path.exists(downsampled_dir):
-		mkpath(downsampled_dir)
-
-	cropped_projections_dir = os.path.join(dataset_metadata_obj.datasets_dir, "cropped_fused_projections")
-	if not os.path.exists(cropped_projections_dir):
-		mkpath(cropped_projections_dir)
-
-	view_image_filename = example_raw_filename
-	view_image_filename.time_point = "%04d" % reference_timepoint
-
-	# Downsample reference timepoint to a new folder
-	logging_broadcast("Downsampling images for fusion+segmentation")
-	for direction, direction_dir in zip(range(1, dataset_metadata_obj.number_of_directions + 1), raw_direction_dirs):
-		view_image_filename.direction = "%04d" % (direction + 1)
-		next_downsampled_image_path = os.path.join(downsampled_dir, view_image_filename.get_name())
-
-		view_image_filename.direction = "%04d" % direction
-		downsampled_image_path = os.path.join(downsampled_dir, view_image_filename.get_name())
-
-		if os.path.exists(downsampled_image_path) and os.path.exists(next_downsampled_image_path): 
-			# We cannot guarantee that last downsampled file was finished if the pipeline crashed previously, so always redo it
-			logging_broadcast("Found existing file %s, skipping downsampling." % downsampled_image_path)
-			continue
-
-		full_image_path = os.path.join(direction_dir, view_image_filename.get_name())
-		full_image = IJ.openImage(full_image_path)
-		downsampled_image = downsample_image_stack(full_image, full_image.getWidth() / IMAGE_DOWNSAMPLING_FACTOR_XY)
-		fs = FileSaver(downsampled_image)
-		fs.saveAsTiff(downsampled_image_path)
-
-	# Fuse downsampled reference timepoint
-	view_dims = get_image_dimensions_from_file(os.path.join(downsampled_dir, view_image_filename.get_name()))
-	fuse_file_pattern = view_image_filename
-	fuse_file_pattern.direction = "{aaaa}"
-	logging_broadcast("DS%04d Fusing downsampled %s timepoint as reference" % (dataset_metadata_obj.id, reference_timepoint))
-	if not DEBUG_USE_FUSED_PREVIEW_CACHE:
-		create_and_fuse_preview_dataset(downsampled_dir, fuse_file_pattern.get_name(), (1, dataset_metadata_obj.number_of_directions), view_dims)
-
-	fused_file_path = os.path.join(downsampled_dir, "fused_tp_0_ch_0.tif")
-
-	fused_stack = IJ.openImage(fused_file_path)
-	z_projection = tribolium_image_utils.project_image(fused_stack, "Z", "Max")
-	y_projection = tribolium_image_utils.project_image(fused_stack, "Y", "Max")
-
-	logging_broadcast("Segmenting downsampled and fusing cropped embryo")
-	zy_cropped_projections, segmentation_results = segment_embryo_and_fuse_again_cropping_around_embryo(
-														raw_dataset_xml_path=os.path.join(downsampled_dir, "dataset.xml"),
-														fused_xml_path=os.path.join(downsampled_dir, "fused.xml"),
-														z_projection=z_projection,
-														y_projection=y_projection)
 	
-	# Save ZY cropped projection montages
-	if zy_cropped_projections == False:
-		logging_broadcast("segment_embryo_and_fuse_again_cropping_around_embryo Failed. Exiting Fusion-branch.")
-		return False
-	IJ.setBackgroundColor(255, 255, 255)
-	IJ.run(zy_cropped_projections, "Canvas Size...", "width=%s height=%s position=Center" % (CANVAS_SIZE_FOR_EMBRYO_PREVIEW, CANVAS_SIZE_FOR_EMBRYO_PREVIEW))
-	zy_projections_filename = view_image_filename
-	zy_projections_filename.direction = "z+yM"
-	zy_projections_external_path = os.path.join(cropped_projections_dir, zy_projections_filename.get_name_without_extension() + "_montage.tif")
-	zy_projections_meta_path = os.path.join(dataset_metadata_obj.root_dir, METADATA_DIR_NAME, zy_projections_filename.get_name_without_extension() + "_montage.tif")
-	save_tiff(zy_cropped_projections, zy_projections_external_path)
-	save_tiff(zy_cropped_projections, zy_projections_meta_path)
 
 	if RUN_FUSION_UP_TO_DOWNSAMPLED_PREVIEW:
 		logging_broadcast("Fusion-branch was specified to run only until preview. Continuing.")
@@ -1652,12 +1784,6 @@ def fusion_branch_processing(dataset_metadata_obj):
 
 	###### Fusion and deconvolution full dataset
 
-	upscaled_translation_embryo_to_center = upscale_translation_matrix(segmentation_results.transformation_embryo_to_center, IMAGE_DOWNSAMPLING_FACTOR_XY)
-	upscaled_bounding_box = upscale_bounding_box(segmentation_results.embryo_crop_box, IMAGE_DOWNSAMPLING_FACTOR_XY, (IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z))
-	upscaled_vertical_box = rotate_bounding_box_vertically(upscaled_bounding_box)
-	
-	logging.info("Upscaled matrix for embryo translation to center: %s" % upscaled_translation_embryo_to_center)
-	logging.info("Upscaled bounding box for embryo cropping: %s" % upscaled_bounding_box)
 
 	for ch in range(1, dataset_metadata_obj.number_of_channels + 1):
 		raw_direction_dirs = get_directions_dirs_for_folder(os.path.join(dataset_metadata_obj.raw_images_dir_path, "CH%04d" % ch), 
@@ -1669,31 +1795,27 @@ def fusion_branch_processing(dataset_metadata_obj):
 			mkpath(dataset_metadata_obj.raw_aligned_stacks_dir)
 
 
-		pre_fusion_dataset_basename = view_image_filename
-		pre_fusion_dataset_basename.direction = "all_"
-		pre_fusion_dataset_basename.time_point = "all_"
-		pre_fusion_dataset_basename.channel = "%04d" % ch
-		fusion_dataset_basename = deepcopy(pre_fusion_dataset_basename)
-		fusion_dataset_basename.direction = "fuse"
-		fusion_dataset_basename = os.path.splitext(fusion_dataset_basename.get_name())[0]
-		full_dataset_file_pattern = deepcopy(pre_fusion_dataset_basename)
-		pre_fusion_dataset_basename = os.path.splitext(pre_fusion_dataset_basename.get_name())[0]
-		full_dataset_file_pattern.direction = "{aaaa}"
-		full_dataset_file_pattern.time_point = "{tttt}"
-		full_dataset_file_pattern = os.path.join("..", "DR{aaaa}", full_dataset_file_pattern.get_name())
+		pre_fusion_dataset_filename = dataset_metadata_obj.example_raw_filename.get_modified_name(direction = "(ALL)", channel=ch, time_point = "(ALL)", extension="xml")
 
+		fusion_dataset_filename = dataset_metadata_obj.example_raw_filename.get_modified_name(direction = "(FU)", channel=ch, time_point = "(ALL)", extension="xml")		
+
+		full_dataset_file_pattern = os.path.join("..", "DR{aaaa}", dataset_metadata_obj.example_raw_filename.get_modified_name(direction = "{aaaa}", channel=ch, time_point = "{tttt}"))
 		
-		dataset_xml_path = os.path.join(fusion_setup_folder, pre_fusion_dataset_basename + ".xml")
-		is_bounding_box_present = get_bounding_box_coords_from_xml(dataset_xml_path, "embryo_cropped") is not None
+		dataset_xml_path = os.path.join(fusion_setup_folder, pre_fusion_dataset_filename)
 		
-		if USE_FUSION_DATASET_CACHE and is_bounding_box_present:
-			logging_broadcast("Found previously created dataset with 'embryo_cropped' crop box. Skipping dataset creation and registration.")
+		if skip_to_fusion_FLAG:
+			logging_broadcast("skip_to_fusion_FLAG is TRUE. Skipping dataset creation and registration.")
+			old_pre_fusion_dataset_filename = dataset_metadata_obj.example_raw_filename.get_modified_name(direction = "all_", channel=ch, time_point = "all_", extension="xml")
+			old_pre_fusion_dataset_path = os.path.join(fusion_setup_folder, old_pre_fusion_dataset_filename)
+			if os.path.exists(old_pre_fusion_dataset_path):
+				os.rename(old_pre_fusion_dataset_path, os.path.join(fusion_setup_folder, pre_fusion_dataset_filename))
+				logging.info("Found dataset XML with old name, renaming: %s to %s" % (old_pre_fusion_dataset_path, os.path.join(fusion_setup_folder, pre_fusion_dataset_filename)))
 		else:
-			logging_broadcast("Creating dataset for fusion with selected timepoints: %s" % (timpoints_to_fuse))
+			logging_broadcast("Creating dataset for fusion with selected timepoints: %s" % (timepoints_to_fuse))
 			create_and_register_full_dataset(fusion_setup_folder, 
-											pre_fusion_dataset_basename, 
+											pre_fusion_dataset_filename, 
 											full_dataset_file_pattern, 
-											timpoints_to_fuse,
+											timepoints_to_fuse,
 											(1, dataset_metadata_obj.number_of_directions),
 											(IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z),
 											reference_timepoint=reference_timepoint)
@@ -1707,113 +1829,28 @@ def fusion_branch_processing(dataset_metadata_obj):
 			define_bounding_box_for_fusion(dataset_xml_path, upscaled_vertical_box, "embryo_cropped")
 
 
-		print("Starting Fusion or Deconvolution")
+		logging_broadcast("Starting Fusion or Deconvolution")
 		fusion_output_dir = os.path.join(dataset_metadata_obj.root_dir, FUSED_DIR_NAME, "CH%04d" % ch)
 		if not os.path.exists(fusion_output_dir):
 			mkpath(fusion_output_dir)
 		if RUN_FUSION_BRANCH_UP_TO_START_OF_FUSION:
-			logging_broadcast("Specified to run only up to the start of deconvolution. Done fusion branch.")
+			logging_broadcast("Specified to run only up to the start of deconvolution. Done fusion-branch.")
 			return True
 		if ONLY_FUSE_FULL:
-			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"))
+			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_filename))
 		if FUSE_CONTENT_BASED:
-			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"), use_entropy_weighted_fusion=True)
+			fuse_dataset_to_tiff(dataset_xml_path, "embryo_cropped", os.path.join(fusion_output_dir, fusion_dataset_filename), use_entropy_weighted_fusion=True)
 		if FUSE_AND_DECONVOLVE_FULL:
 			extract_psf(dataset_xml_path, reference_timepoint)
 			assign_psf(dataset_xml_path, reference_timepoint)
 			deconvolve_dataset_to_tiff(dataset_xml_path, 
 										"embryo_cropped",
-										os.path.join(fusion_output_dir, fusion_dataset_basename + ".xml"),
+										os.path.join(fusion_output_dir, fusion_dataset_filename),
 										NUM_DECONV_ITERATIONS)
 		if FUSE_CLIJ_GPU:
-			if USE_FUSION_DATASET_CACHE and os.path.exists(os.path.join(fusion_setup_folder, "psf")):
-				logging_broadcast("Found 'psf' folder inside dataset setup folder. Skipping PSF extraction and asignment.")
-			else:	
-				logging_broadcast("Extracting PSF from reference timepoint %s and assigning it to all." % reference_timepoint)
-				extract_psf(dataset_xml_path, reference_timepoint)
-				assign_psf(dataset_xml_path, reference_timepoint)
-
-
-			temp_dir_fusion = os.path.join(CACHING_DIR, "fusion_cache_dir_DS00" + str(dataset_metadata_obj.id) + "_" + os.path.basename(dataset_metadata_obj.datasets_dir)) #  uuid.uuid4().hex # CHANGE BACK!!!! #####################################
-			if not os.path.exists(temp_dir_fusion):
-				mkpath(temp_dir_fusion)	
-
-			transformed_psf_dir = os.path.join(fusion_setup_folder, "transformed_psf")
-			if not os.path.exists(transformed_psf_dir):
-				mkpath(transformed_psf_dir)
-
-			logging_broadcast("Starting deconvolution->content-based fusion on the GPU ")
-			initial_mem_usage = get_free_memory_in_GB()
-			used_mem_last_iter = initial_mem_usage
-			last_fused_path = ""
-			last_raw_transformed_paths = []
-			for tp_index, tp in enumerate(timpoints_to_fuse):
-				fused_save_path =  os.path.join(fusion_output_dir, "deconv_weighted_fused_tp_%s.tif" % tp)
-				logging_broadcast("Fusing timepoint %s" % tp)
-				if os.path.exists(fused_save_path) or os.path.exists(fused_save_path + "f"):
-					logging_broadcast("Found previously fused timepoint, skipping.")
-					last_fused_path = "skipped"
-					continue
-
-				logging_broadcast("Saving averaged transformed PSFs")
-				psf_paths = save_transformed_psfs(dataset_xml_path, transformed_psf_dir, tp, dataset_metadata_obj.number_of_directions)
-
-
-				logging_broadcast("Saving raw transformed stacks")
-				raw_transformed_paths = save_raw_transformed_stacks(dataset_xml_path, temp_dir_fusion, tp, dataset_metadata_obj.number_of_directions)
-				if raw_transformed_paths == False:
-					logging_broadcast("ERROR: failed to extract raw transformed stacks. Skipping the dataset.")
-					return False
-
-				if tp_index > 0:
-					is_last_fused_timepoint_present = False
-					
-					if last_fused_path == "skipped":
-						is_last_fused_timepoint_present = True
-					else:					
-						last_fused_tp_timeout = 600
-						logging.info("Checking whether last fused timepoint is present. %s with timeout %s" % (last_fused_path, last_fused_tp_timeout))
-						is_last_fused_timepoint_present = check_until_timeout_if_file_is_present(last_fused_path, timeout=last_fused_tp_timeout)
-
-					if is_last_fused_timepoint_present == True:
-						logging_broadcast("Started moving raw aligned stack for previous fused timepoint.")
-						start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
-					else:
-						logging_broadcast("ERROR: Prevous timepoint fusion was not generated for some reason. Exiting pipeline!")
-						message = "Pipeline for folder: %s Has experienced fatal error on the Dataset: %s. Pipeline exiting." % (dataset_metadata_obj.datasets_dir, dataset_metadata_obj.id)
-						send_notification_and_exit(message)
-
-
-				logging_broadcast("Starting deconvolution->fusion of the timepoint with params raw_transformed_paths: %s psf_paths: %s fused_save_path: %s NUM_DECONV_ITERATIONS: %s" % (raw_transformed_paths, psf_paths, fused_save_path, NUM_DECONV_ITERATIONS))
-				# Spawning a separate process for fusion and deconvolution because this function leaks memory, and this is the only way to make sure it is released.
-				start_deconv_fuse_timepoint_process(raw_transformed_paths, psf_paths, fused_save_path, NUM_DECONV_ITERATIONS)
-
-				used_mem = get_free_memory_in_GB()
-				logging.info("Used memory growth per iteration: %s Gb" % (used_mem - used_mem_last_iter))
-				logging.info("Used memory growth total: %s Gb" % (used_mem - initial_mem_usage))
-				logging.info("Used memory total: %s Gb" % used_mem)
-				used_mem_last_iter = used_mem
-				last_fused_path = fused_save_path
-				last_raw_transformed_paths = raw_transformed_paths
-			for sec in range(400):
-				if os.path.exists(last_fused_path):
-
-					logging_broadcast("Started moving raw aligned stack for the last timepoint.")
-					start_moving_files(last_raw_transformed_paths, dataset_metadata_obj.raw_aligned_stacks_dir)
-					
-					for sec in range(300):
-						if get_tiffs_in_directory(temp_dir_fusion) == []:
-							shutil.rmtree(temp_dir_fusion)
-							return True
-						if sec % 10 == 0:
-							logging.info("Waiting for last TIFF files to be transfered from the cache dir.")
-						time.sleep(1)
-					
-					logging_broadcast("WARNING: some TIFF files are left in the cache dir! %s" % temp_dir_fusion)
-					return True
-				time.sleep(1)
-			logging_broadcast("ERROR: reached timeout on waiting for the last fused timepoint.")
-			return False
+			was_fuse_CLIJ_successfull = fuse_deconv_CLIJ(dataset_metadata_obj, ch, fusion_setup_folder, fusion_output_dir, dataset_xml_path, reference_timepoint, timepoints_to_fuse)
+			if not was_fuse_CLIJ_successfull:
+				return False
 				
 
 	return True
@@ -1898,7 +1935,7 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 		# Here there maybe a race condition for moving files if two pipeline instances are spawned in parallel. But it should not be a problem.
 		logging_broadcast("\tArranging raw image files")
 		try:
-			move_files(
+			move_raw_files_to_organised(
 				raw_images_dir, specimen_directions_in_channels, dataset_id, dataset_name_prefix)
 		except ValueError as e:
 			logging_broadcast(
