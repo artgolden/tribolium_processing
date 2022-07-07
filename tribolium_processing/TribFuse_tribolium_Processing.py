@@ -81,14 +81,12 @@ tribolium_image_utils.dsServiceImageUtilsLocal = ds
 tribolium_image_utils.convertServiceImageUtilsLocal = convert
 
 # TODO: 
-# - Make proper names for the fused raw aligned files
 # - Write current limitations and implicit assumptions in the documentation
 # - test 2 channel case
 # - make an option to load the PSF from a file
 # - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
 # this is very slow. Probably need to switch to some other way of manually defining min/max.
 # - Check whether B-branch uses max projections stack cache (yes it does, need to put it in the Docs)
-# - Do more proper checking of the already made PSFs for fusion, need to check that all have been assigned. Already stubled into this, really need to do this.
 # - Add a lot more logging to fusion branch. log all bigstitcher commands?
 # - restart and log stdout from CLIJ fusion process if it has failed 1 time
 # - make Process spawning work for Linux as well
@@ -275,9 +273,7 @@ class DatasetMetadata:
 		self.raw_images_dir_path = os.path.join(root_dir, RAW_IMAGES_DIR_NAME)
 		self.tp_selected_to_fuse = tp_selected_to_fuse
 		self.raw_aligned_stacks_dir = os.path.join(self.root_dir, RAW_ALIGNED_DIR_NAME)
-	# def __str__(self):
 
-	# 	return object_string
 
 
 def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
@@ -1109,7 +1105,6 @@ def start_deconv_fuse_timepoint_process(raw_transformed_paths, psf_paths, fused_
 
 
 	script_params = 'views_paths="%s",psfs_paths="%s",fused_output_path="%s",num_deconv_iter="%s"' % (views_paths, psfs_paths, fused_output_path, num_deconv_iter)
-	print(script_params)
 	command = [fiji_exe, '--ij2', '--headless', '--console', '--run', script_path, script_params.replace('\\', '/')]
 	p = subprocess.Popen(command)
 	logging_broadcast("Started CLIJ deconv. fusion process with PID: %s" % p.pid)
@@ -1216,7 +1211,7 @@ def fuse_deconv_CLIJ(dataset_metadata_obj, ch, fusion_setup_folder, fusion_outpu
 			
 			for sec in range(300):
 				if get_tiffs_in_directory(temp_dir_fusion) == []:
-					shutil.rmtree(temp_dir_fusion)
+					# shutil.rmtree(temp_dir_fusion) # This fails with "OSError: unlink(): an unknown error occurred: D:\Artemiy\cache_dir\fusion_cache_dir_DS002_MEME\2022-Jul-07-170714-TribFuse_CLIJ_deconv_fusion.log" probably because CLIJ log is still open. skipping for now.
 					return True
 				if sec % 10 == 0:
 					logging.info("Waiting for last TIFF files to be transfered from the cache dir.")
