@@ -93,6 +93,8 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - Add documentation to functions
 # - do projections and montages from fused data
 # - Add to telegram-send Docs info about the config file for each user
+# - Fix removing CLIJ fusion cache dir
+# - Create function safeIJopenImage that will through an error if the file was not found. Currently IJ.openImage does not error out with missing file.
 
 
 EXAMPLE_JSON_METADATA_FILE = """
