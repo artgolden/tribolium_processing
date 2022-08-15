@@ -94,7 +94,6 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - do projections and montages from fused data
 # - Add to telegram-send Docs info about the config file for each user
 # - Fix removing CLIJ fusion cache dir
-# - Create function safeIJopenImage that will through an error if the file was not found. Currently IJ.openImage does not error out with missing file.
 
 
 EXAMPLE_JSON_METADATA_FILE = """
@@ -346,6 +345,11 @@ def check_until_timeout_if_file_is_present(file_path, timeout=600):
 			logging.info("Waiting for the file to be created. %s" % file_path)
 	return False
 
+def open_image(image_path):
+	if not os.path.exists(image_path):
+		logging_broadcast("ERROR: Could not find a file %s! " % image_path)
+		return False
+	return IJ.openImage(image_path)
 
 #						B-branch functions
 
@@ -917,7 +921,7 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 	cropped_fused_path = os.path.join(cropped_fused_dir, "cropped_fusion.xml")
 	cropped_fusion_stack_path = os.path.join(cropped_fused_dir, "fused_tp_0_ch_0.tif")
 	fuse_dataset_to_tiff(raw_dataset_xml_path, "embryo_cropped", cropped_fused_path)
-	zy_cropped_projections = Z_Y_projection_montage_from_image_stack(IJ.openImage(cropped_fusion_stack_path))
+	zy_cropped_projections = Z_Y_projection_montage_from_image_stack(open_image(cropped_fusion_stack_path))
 
 	segmentation_results = SegmentationResults(transformation_embryo_to_center, rotation_angle_z, rotation_angle_y, embryo_crop_box)
 
@@ -1058,7 +1062,9 @@ def fuse_segment_downsampled_ref_timepoint(dataset_metadata_obj, reference_timep
 			continue
 
 		full_image_path = os.path.join(direction_dir, view_image_filename.get_name())
-		full_image = IJ.openImage(full_image_path)
+		full_image = open_image(full_image_path)
+		if full_image == False:
+			return False
 		downsampled_image = downsample_image_stack(full_image, full_image.getWidth() / IMAGE_DOWNSAMPLING_FACTOR_XY)
 		fs = FileSaver(downsampled_image)
 		fs.saveAsTiff(downsampled_image_path)
@@ -1073,7 +1079,7 @@ def fuse_segment_downsampled_ref_timepoint(dataset_metadata_obj, reference_timep
 
 	fused_file_path = os.path.join(downsampled_dir, "fused_tp_0_ch_0.tif")
 
-	fused_stack = IJ.openImage(fused_file_path)
+	fused_stack = open_image(fused_file_path)
 	z_projection = tribolium_image_utils.project_image(fused_stack, "Z", "Max")
 	y_projection = tribolium_image_utils.project_image(fused_stack, "Y", "Max")
 
@@ -1470,7 +1476,7 @@ def b_branch_processing(dataset_metadata_obj):
 			fs = FileSaver(max_proj_stack)
 			fs.saveAsTiff(mproj_stack_path)
 		else:
-			max_proj_stack = IJ.openImage(mproj_stack_path)
+			max_proj_stack = open_image(mproj_stack_path)
 			logging.info(
 				"\tChannel: %s Direction: %s Found existing max Z-projections. Using them." % (channel, direction))
 
@@ -1485,7 +1491,7 @@ def b_branch_processing(dataset_metadata_obj):
 		else:
 			logging.info(
 				"\tChannel: %s Direction: %s Found existing max TIME-projection, using it. \n\t\t\t\t\t%s" % (channel, direction, max_time_proj_full_path))
-			max_time_proj = IJ.openImage(max_time_proj_full_path)
+			max_time_proj = open_image(max_time_proj_full_path)
 
 		logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (
 			channel, direction))
@@ -1543,7 +1549,7 @@ def b_branch_processing(dataset_metadata_obj):
 				max_proj_stack = make_max_Z_projection_stack_from_folder(raw_dir)
 				save_tiff(max_proj_stack, mproj_stack_path)
 			else:
-				max_proj_stack = IJ.openImage(mproj_stack_path)
+				max_proj_stack = open_image(mproj_stack_path)
 				logging.info(
 					"\tChannel: %s Direction: %s Found existing max Z-projections. Using them." % (channel, direction))
 
@@ -1558,7 +1564,7 @@ def b_branch_processing(dataset_metadata_obj):
 			else:
 				logging.info(
 					"\tChannel: %s Direction: %s Found existing max TIME-projection, using it. \n\t\t\t\t\t%s" % (channel, direction, max_time_proj_full_path))
-				max_time_proj = IJ.openImage(max_time_proj_full_path)
+				max_time_proj = open_image(max_time_proj_full_path)
 
 			logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (
 				channel, direction))
@@ -1590,7 +1596,7 @@ def b_branch_processing(dataset_metadata_obj):
 			else:
 				logging.info("\tChannel: %s Direction: %s Found existing cropped max projected stacks. Using them." % (
 											channel, direction))
-				cropped_tstack = IJ.openImage(os.path.join(
+				cropped_tstack = open_image(os.path.join(
 										tstack_dir, cropped_tstack_file_name.get_name()))
 
 			# Cropping raw stacks
@@ -1615,7 +1621,7 @@ def b_branch_processing(dataset_metadata_obj):
 					files_to_crop = raw_stack_files
 					current_active_stack = 1
 				for direction, raw_stack_file_name in enumerate(files_to_crop):
-					raw_stack = IJ.openImage(raw_stack_file_name)
+					raw_stack = open_image(raw_stack_file_name)
 					IJ.run(raw_stack, "Properties...",
 											"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 					raw_stack_cropped = crop_stack_by_template(
@@ -1628,7 +1634,7 @@ def b_branch_processing(dataset_metadata_obj):
 							 dataset_metadata_obj.planes_to_keep_per_direction_b_branch[direction - 1]["end"])
 						else:
 							manual_planes_to_keep = None
-						stack_for_finding_planes = IJ.openImage(raw_stack_files[0])
+						stack_for_finding_planes = open_image(raw_stack_files[0])
 						IJ.run(stack_for_finding_planes, "Properties...",
 											"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 						stack_for_finding_planes = crop_stack_by_template(
@@ -1659,7 +1665,7 @@ def b_branch_processing(dataset_metadata_obj):
 		for direction, tstack_dir in enumerate(tstack_dataset_dirs):
 			stack_path = os.path.join(
 				tstack_dir, get_any_tiff_name_from_dir(tstack_dir).get_name())
-			imp_stack = IJ.openImage(stack_path)
+			imp_stack = open_image(stack_path)
 			if direction == 0:
 				montage_stack = imp_stack.getStack()
 				montage_stack_name = get_any_tiff_name_from_dir(tstack_dir)
@@ -1719,7 +1725,7 @@ def b_branch_processing(dataset_metadata_obj):
 		for direction, tstack_dir in enumerate(tstack_dataset_dirs):
 			stack_path = os.path.join(
 				tstack_dir, get_any_tiff_name_from_dir(tstack_dir).get_name())
-			imp_stack = IJ.openImage(stack_path)
+			imp_stack = open_image(stack_path)
 			if direction == 0:
 				vert_montage_stack = imp_stack.getStack()
 				vert_montage_stack_name = get_any_tiff_name_from_dir(tstack_dir)
