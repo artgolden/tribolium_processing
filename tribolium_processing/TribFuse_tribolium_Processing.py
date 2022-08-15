@@ -94,6 +94,7 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - do projections and montages from fused data
 # - Add to telegram-send Docs info about the config file for each user
 # - Fix removing CLIJ fusion cache dir
+# - Fix if "use_manual_bounding_box": false is unset in JSON
 
 
 EXAMPLE_JSON_METADATA_FILE = """
@@ -1060,7 +1061,7 @@ def fuse_segment_downsampled_ref_timepoint(dataset_metadata_obj, reference_timep
 			# We cannot guarantee that last downsampled file was finished if the pipeline crashed previously, so always redo it
 			logging_broadcast("Found existing file %s, skipping downsampling." % downsampled_image_path)
 			continue
-
+		
 		full_image_path = os.path.join(direction_dir, view_image_filename.get_name())
 		full_image = open_image(full_image_path)
 		if full_image == False:

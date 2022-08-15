@@ -37,26 +37,29 @@ class FredericFile:
 		self.extension.lower()
 
 	def get_name(self):
-		if self.additional_info != "":
-			self.additional_info = "_" + self.additional_info
+		additional_info = self.additional_info
+		if additional_info != "":
+			additional_info = "_" + additional_info
 		return "%s-DS%sTP%sDR%sCH%sPL%s%s.%s" % (self.dataset_name,
 										 self.dataset_id,
 										 self.time_point,
 										 self.direction,
 										 self.channel,
 										 self.plane,
-										 self.additional_info,
+										 additional_info,
 										 self.extension)
+
 	def get_name_without_extension(self):
-		if self.additional_info != "":
-			self.additional_info = "_" + self.additional_info
+		additional_info = self.additional_info
+		if additional_info != "":
+			additional_info = "_" + additional_info
 		return "%s-DS%sTP%sDR%sCH%sPL%s%s" % (self.dataset_name,
 										 self.dataset_id,
 										 self.time_point,
 										 self.direction,
 										 self.channel,
 										 self.plane,
-										 self.additional_info)
+										 additional_info)
 
 	def set_param(self, dataset_name=None, dataset_id=None, time_point=None, direction=None, channel=None, plane=None, extension=None, additional_info=None):
 		if dataset_name is not None:
