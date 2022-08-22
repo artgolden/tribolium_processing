@@ -17,9 +17,10 @@
 #@ String (visibility=MESSAGE, value="\n<html><h1>Fusion-branch parameters</h1></html>", required=false) msg_fuse_branch
 # @ Boolean (label='Do Fusion-branch processing?', value=false) do_fusion_branch
 # @ Boolean (label='Run fusion-branch only up to downsampled preview', value=true) run_fusion_up_to_downsampled_preview
-# @ Boolean (label='Run fusion-branch only up to start of deconvolution', value=False) run_fusion_up_to_start_of_deconvolution
+# @ Boolean (label='Run fusion-branch only up to start of fusion/deconvolution', value=false) run_fusion_up_to_start_of_deconvolution
 # @ String (choices={"Only Fuse full dataset (BigStitcher)", "Content-based fusion (BigStitcher)", "Fuse+Deconvolve (BigStitcher)", "Deconvolve->Fuse content-based (CLIJx GPU)"}, style="listBox", value="Fuse+Deconvolve") Only_fuse_or_deconvolve
 # @ Boolean (label='Fusion-branch: Use previously created dataset (works only if everything up to fusion start is done)?', value=false) use_fusion_dataset_cache
+# @ Boolean (label='Fusion-branch: Do very thorough registration (precise translation + ICP)? Takes longer.', value=false) do_precise_registration
 # @ String (label='Thresholding for embryo segmentation', choices={"triangle", "minerror", "mean", "huang2"}, style="radioButtonHorizontal", value="triangle") segmentation_threshold_type
 # @ Float (label='Pixel distance X axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_x
 # @ Float (label='Pixel distance Y axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_y
@@ -95,6 +96,8 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - Add to telegram-send Docs info about the config file for each user
 # - Fix removing CLIJ fusion cache dir
 # - Fix if "use_manual_bounding_box": false is unset in JSON
+# - Make presence of all of the fields in the JSON mandatory (set to false when disabled) so that the user does not get silent ignoring of his parameters.
+# - Put logs from all previous runs into a subfolder in the datasets folder. Keep only last one. 
 
 
 EXAMPLE_JSON_METADATA_FILE = """
@@ -214,6 +217,7 @@ FUSE_AND_DECONVOLVE_FULL = False
 FUSE_CONTENT_BASED = False
 FUSE_CLIJ_GPU = False
 SEGMENTATION_THRESHOLD_TYPE = segmentation_threshold_type
+DO_PRECISE_REGISTRATION = do_precise_registration
 
 IMAGE_PIXEL_DISTANCE_X = pixel_distance_x
 IMAGE_PIXEL_DISTANCE_Y = pixel_distance_y
@@ -991,12 +995,25 @@ def create_and_register_full_dataset(dataset_dir, dataset_xml_filename, file_pat
 	logging.info("Detecting interest points of the full dataset: " + detect_string)
 	IJ.run("Detect Interest Points for Pairwise Registration", detect_string)
 
-	register_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s" % (dataset_xml_path, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations)
-	logging.info("Registering individual timepoints of the full dataset: " + register_string)
-	IJ.run("Register Dataset based on Interest Points",register_string)
+	if DO_PRECISE_REGISTRATION:
+		register_rot_inv_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s" % (dataset_xml_path, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations)
+		logging.info("Registering (rotation invariant) individual timepoints of the full dataset: " + register_rot_inv_string)
+		IJ.run("Register Dataset based on Interest Points",register_rot_inv_string)
+
+		register_precise_trans_inv_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Precise descriptor-based (translation invariant)] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 number_of_neighbors=3 redundancy=2 significance=3 allowed_error_for_ransac=3 ransac_iterations=Normal" % (dataset_xml_path)
+		logging.info("Registering individual timepoints of the full dataset: " + register_precise_trans_inv_string)
+		IJ.run("Register Dataset based on Interest Points",register_precise_trans_inv_string)
+
+		register_ICP_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Assign closest-points with ICP (no invariance)] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 maximal_distance=5 maximal_number=100 use_ransac allowed_error_for_ransac=2 ransac_iterations=200 minimal_number=12" % (dataset_xml_path)
+		logging.info("Registering (precise translation invariant) individual timepoints of the full dataset: " + register_ICP_string)
+		IJ.run("Register Dataset based on Interest Points",register_ICP_string)
+	else:
+		register_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Register timepoints individually] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads fix_views=[Fix first view] map_back_views=[Do not map back (use this if views are fixed)] transformation=Affine regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=%s significance=%s allowed_error_for_ransac=%s number_of_ransac_iterations=%s" % (dataset_xml_path, redundancy, significance, allowed_error_for_ransac, number_of_ransac_iterations)
+		logging.info("Registering individual timepoints of the full dataset: " + register_string)
+		IJ.run("Register Dataset based on Interest Points",register_string)
 
 	register_to_1_tp_string = "select=%s process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] registration_algorithm=[Fast descriptor-based (rotation invariant)] registration_over_time=[Match against one reference timepoint (no global optimization)] registration_in_between_views=[Only compare overlapping views (according to current transformations)] interest_points=beads reference=%s consider_each_timepoint_as_rigid_unit transformation=Translation regularize_model model_to_regularize_with=Rigid lamba=0.10 redundancy=1 significance=10 allowed_error_for_ransac=2 number_of_ransac_iterations=Normal interestpoint_grouping=[Group interest points (simply combine all in one virtual view)] interest=5" % (dataset_xml_path, reference_timepoint)
-	logging.info("Registering timepoints to tp %s of the full dataset: %s" % (reference_timepoint, register_to_1_tp_string))
+	logging.info("Registering (ICP) timepoints to tp %s of the full dataset: %s" % (reference_timepoint, register_to_1_tp_string))
 	IJ.run("Register Dataset based on Interest Points", register_to_1_tp_string)
 
 def link_all_files_from_directions_to_folder(directions_dirs_list, symlinked_folder):
