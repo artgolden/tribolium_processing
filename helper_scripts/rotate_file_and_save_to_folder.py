@@ -1,6 +1,6 @@
 #@ File image_to_rotate
 #@ File(label='Directory to save images', style='directory') output_dir
-#@ String (label='How to rotate the image?', choices={"Right", "Left", "Flip Vertically", "Flip Horizontally"}, style="radioButtonHorizontal", value="Left") rotation_direction
+#@ String (label='How to rotate the image?', choices={"Right", "Left", "Flip Vertically", "Flip Horizontally", "Rotate 180"}, style="radioButtonHorizontal", value="Left") rotation_direction
 
 image_to_rotate = image_to_rotate
 output_dir = output_dir
@@ -22,6 +22,9 @@ print("Opening image %s" % image_path)
 imp = IJ.openImage(image_path)
 if rotation_direction in ["Flip Vertically", "Flip Horizontally"]:
     IJ.run(imp, rotation_direction, "stack")
+elif rotation_direction == "Rotate 180":
+    IJ.run(imp, "Flip Horizontally", "stack")
+    IJ.run(imp, "Flip Vertically", "stack")
 else:
     IJ.run(imp, "Rotate 90 Degrees %s" % rotation_direction, "")
 print("Saving rotated to the %s image %s" % (rotation_direction, output_path))
