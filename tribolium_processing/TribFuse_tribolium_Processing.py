@@ -21,6 +21,7 @@
 # @ String (choices={"Only Fuse full dataset (BigStitcher)", "Content-based fusion (BigStitcher)", "Fuse+Deconvolve (BigStitcher)", "Deconvolve->Fuse content-based (CLIJx GPU)"}, style="listBox", value="Fuse+Deconvolve") Only_fuse_or_deconvolve
 # @ Boolean (label='Fusion-branch: Use previously created dataset (works only if everything up to fusion start is done)?', value=false) use_fusion_dataset_cache
 # @ Boolean (label='Fusion-branch: Do very thorough registration (precise translation + ICP)? Takes longer.', value=false) do_precise_registration
+# @ Boolean (label='Fusion-branch: Deconvolve image in 2 parts. (When not enough GPU mem) Takes longer.', value=false) big_image_needs_batching
 # @ String (label='Thresholding for embryo segmentation', choices={"triangle", "minerror", "mean", "huang2"}, style="radioButtonHorizontal", value="triangle") segmentation_threshold_type
 # @ Float (label='Pixel distance X axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_x
 # @ Float (label='Pixel distance Y axis for calibration in um', value=1.0, style="format:#.00") pixel_distance_y
@@ -97,7 +98,8 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - Fix removing CLIJ fusion cache dir
 # - Fix if "use_manual_bounding_box": false is unset in JSON
 # - Make presence of all of the fields in the JSON mandatory (set to false when disabled) so that the user does not get silent ignoring of his parameters.
-# - Put logs from all previous runs into a subfolder in the datasets folder. Keep only last one. 
+# - Put logs from all previous runs into a subfolder in the datasets folder. Keep only last one.
+# - Make LOCK file for the file renaming 
 
 
 EXAMPLE_JSON_METADATA_FILE = """
@@ -238,6 +240,8 @@ if Only_fuse_or_deconvolve == "Fuse+Deconvolve (BigStitcher)":
 if Only_fuse_or_deconvolve == "Deconvolve->Fuse content-based (CLIJx GPU)":
 	FUSE_CLIJ_GPU = True
 	FUSED_DIR_NAME = "(F0)-ZStacks-DeconContentBasedFusion-ZS"
+
+BIG_IMAGE_NEEDS_BATCH_DECONV = big_image_needs_batching
 
 CANVAS_SIZE_FOR_EMBRYO_PREVIEW = 1400 / IMAGE_DOWNSAMPLING_FACTOR_XY
 
@@ -1129,8 +1133,11 @@ def start_deconv_fuse_timepoint_process(raw_transformed_paths, psf_paths, fused_
 	views_paths = ";".join(raw_transformed_paths)
 	psfs_paths = ";".join(psf_paths)
 
+	big_image_needs_batching = "False"
+	if BIG_IMAGE_NEEDS_BATCH_DECONV: 
+		big_image_needs_batching = "True"
 
-	script_params = 'views_paths="%s",psfs_paths="%s",fused_output_path="%s",num_deconv_iter="%s"' % (views_paths, psfs_paths, fused_output_path, num_deconv_iter)
+	script_params = 'views_paths="%s",psfs_paths="%s",fused_output_path="%s",num_deconv_iter="%s",big_image_needs_batching="%s"' % (views_paths, psfs_paths, fused_output_path, num_deconv_iter,big_image_needs_batching)
 	command = [fiji_exe, '--ij2', '--headless', '--console', '--run', script_path, script_params.replace('\\', '/')]
 	p = subprocess.Popen(command)
 	logging_broadcast("Started CLIJ deconv. fusion process with PID: %s" % p.pid)

@@ -2,6 +2,7 @@
 #@ String psfs_paths
 #@ String fused_output_path
 #@ String num_deconv_iter
+#@ String big_image_needs_batching
 #@ ConvertService convert
 #@ OpService ops
 #@ DatasetService ds
@@ -19,6 +20,7 @@ ops = ops
 unicode = unicode
 ds = ds
 convert = convert
+big_image_needs_batching = big_image_needs_batching
 
 # TODO: 
 # - Check where 32-bit conversion is not needed
@@ -34,6 +36,7 @@ from ij.io import FileSaver
 from net.haesleinhuepf.clijx import CLIJx
 from net.haesleinhuepf.clij.clearcl import ClearCLBuffer
 from net.haesleinhuepf.clijx.plugins import DeconvolveRichardsonLucyFFT
+from net.haesleinhuepf.clij.coremem.enums import NativeTypeEnum
 
 
 def logging_broadcast(string):
@@ -47,7 +50,7 @@ def save_tiff_simple(image, path):
     fs = FileSaver(image)
     fs.saveAsTiff(path)
 
-def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs, num_iterations=15, sigma_scaling_factor_xy=1, sigma_scaling_factor_z=0.5):
+def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs, num_iterations=15, sigma_scaling_factor_xy=1, sigma_scaling_factor_z=0.5, big_image_needs_batching=False):
     """Do deconvolution on individual views, then fuse them adjusting for entropy
 
     Args:
@@ -56,6 +59,7 @@ def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs
         num_iterations (int, optional): number of deconvolution iterations. Defaults to 8.
         sigma_scaling_factor_xy (int, optional): scaling factor of X and Y axis, used to calculate sigmas for quick entropy calculation. Defaults to 4.
         sigma_scaling_factor_z (int, optional): scaling factor of Z axis, used to calculate sigmas for quick entropy calculation. Defaults to 2.
+        big_image_needs_batching (bool, optional): whether to batch the deconvolution of the image. Defaults to False.
 
     Returns:
         ImagePlus: 32-bit fused image 
@@ -90,8 +94,39 @@ def deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs
         logging_broadcast("Deconvolving %s view" % i)
         view = clijx.convert(views[i], ClearCLBuffer)
         clijx.release(buffer2)
-        DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, view, psf, buffer1, num_iterations, 0.0, False)
-        clijx.copy(buffer1, view)
+        if(big_image_needs_batching):
+            logging_broadcast("Recieved big_image_needs_batching parameter. Splitting in two batches for deconvolution")
+            clijx.release(buffer2)
+            avg_weighted_RAM = clijx.pull(avg_weighted_image)
+            clijx.release(avg_weighted_image)
+            avg_weights_RAM = clijx.pull(avg_weights)
+            clijx.release(avg_weights)
+
+            width, height, depth  = clijx.getDimensions(view)
+            psf_width, psf_height, psf_depth = clijx.getDimensions(psf)
+            half_height = height / 2 + psf_height / 2 + 2
+
+            half_buffer_in = clijx.create([width, half_height, depth], NativeTypeEnum.Float)
+            half_buffer_out = clijx.create(half_buffer_in)
+
+            clijx.paste3D(view, half_buffer_in, 0, 0, 0)
+            
+            logging_broadcast("Deconvolving first half")
+            DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, half_buffer_in, psf, half_buffer_out, num_iterations, 0.0, False)
+
+            clijx.paste3D(view, half_buffer_in, 0, -(height - half_height), 0)
+            clijx.paste3D(half_buffer_out, view, 0, 0, 0)
+            
+            logging_broadcast("Deconvolving second half")
+            DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, half_buffer_in, psf, half_buffer_out, num_iterations, 0.0, False)
+
+            clijx.paste3D(half_buffer_out, view, 0, height - half_height, 0)
+
+            avg_weighted_image = clijx.convert(avg_weighted_RAM, ClearCLBuffer)
+            avg_weights = clijx.convert(avg_weights_RAM, ClearCLBuffer)
+        else:
+            DeconvolveRichardsonLucyFFT.deconvolveRichardsonLucyFFT(clijx, view, psf, buffer1, num_iterations, 0.0, False)
+            clijx.copy(buffer1, view)
         buffer2 = clijx.create(view)
         weight = buffer2
         compute_entropy_weight(view, weight)
@@ -148,10 +183,10 @@ transformed_psfs = []
 for psf_path in psfs_paths.split(";"):
     transformed_psfs.append(IJ.openImage(unicode(psf_path)))
 
-
+big_image_needs_batching = big_image_needs_batching == "True"
 
 logging_broadcast("Starting deconvolution+fusion")
-deconv_fused_image = deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs, num_iterations=num_deconv_iter)
+deconv_fused_image = deconvolve_fuse_timepoint_multiview_entropy_weighted(views, transformed_psfs, num_iterations=num_deconv_iter, big_image_needs_batching=big_image_needs_batching)
 
 logging_broadcast("Converting output to 16-bit")
 deconv_fused_image = ds.create(ops.run("convert.uint16", deconv_fused_image))
