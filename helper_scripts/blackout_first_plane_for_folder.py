@@ -19,5 +19,6 @@ output_file_path = os.path.join(output_dir.getAbsolutePath(), os.path.basename(i
 
 imp = IJ.openImage(image_path)
 IJ.run(imp, "Select All", "")
+IJ.setForegroundColor(0, 0, 0)
 IJ.run(imp, "Fill", "slice")
 save_tiff_simple(imp, output_file_path)
