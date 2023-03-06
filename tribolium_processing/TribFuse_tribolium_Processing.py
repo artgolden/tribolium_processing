@@ -100,6 +100,8 @@ tribolium_image_utils.convertServiceImageUtilsLocal = convert
 # - Make presence of all of the fields in the JSON mandatory (set to false when disabled) so that the user does not get silent ignoring of his parameters.
 # - Put logs from all previous runs into a subfolder in the datasets folder. Keep only last one.
 # - Make LOCK file for the file renaming 
+# - In telegram-send send which Datasets have failed and which finished successfully
+# - Fix cache renaming raw transformed stacks for fusion
 
 
 EXAMPLE_JSON_METADATA_FILE = """
