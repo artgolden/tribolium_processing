@@ -80,6 +80,10 @@ If you have already organised files in *(P0)-ZStacks-Raw* folder from the previo
 _Optional manual crop box input:_ you can put a file with the name *manual_crop_box.roi* that will contain a ROI object saved from Fiji RoiManager that specifies a crop box around an embryo that will be used for this direction if the parameter "use_manual_bounding_box" is set to TRUE in the JSON file.
 There is a small plugin to help you generate this manual crop box: *create_manual_crop_box.py*
 
+___
+
+# Everything below is under construction!!! (documentation only for part of the B-branch for now)
+
 ## Outputs 
 The plugin will generate the following folder structure for each dataset:
 ```
