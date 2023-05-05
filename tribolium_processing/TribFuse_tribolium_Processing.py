@@ -384,7 +384,11 @@ def create_crop_template(max_time_projection, meta_dir, dataset_metadata_obj, da
 
 	if dataset_metadata_obj.use_manual_b_branch_bounding_box == True:
 		logging.info("\tUsing manualy specified crop box.")
-		manual_roi = RoiDecoder(os.path.join(meta_dir, "%s.roi" % MANUAL_CROP_BOX_FILE_NAME)).getRoi()
+		manual_crop_box_path = os.path.join(meta_dir, "%s.roi" % MANUAL_CROP_BOX_FILE_NAME)
+		if os.path.exists(manual_crop_box_path) == False:
+			logging_broadcast("Error: Parameter use_manual_bounding_box is set to True, but could not find the manual crop box file at: %s." % manual_crop_box_path)
+			raise Exception("Could not find a manual crop box file.")
+		manual_roi = RoiDecoder(manual_crop_box_path).getRoi()
 		rot_angle = round(get_rectangular_polygon_roi_angle(manual_roi), ndigits=1)
 		# Always assuming that embryo is horizontal
 		embryo_length, embryo_width = get_rotated_rect_polygon_roi_dims(manual_roi)
