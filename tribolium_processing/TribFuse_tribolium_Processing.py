@@ -9,6 +9,7 @@
 
 #@ String (visibility=MESSAGE, value="\n<html><h1>B-branch parameters</h1></html>", required=false) msg_b_banch
 # @ Boolean (label='Do B-branch processing?', value=false) do_b_branch
+# @ Boolean (label='Do B-branch only up to time-projecitons (for manual segmentation)?', value=false) b_branch_only_up_to_time_projections
 # @ Boolean (label='B-branch: Use previously cropped stacks (if present)?', value=false) use_cropped_cache
 # @ Boolean (label='Compress images?', value=true) compress_on_save
 # @ Boolean (label='Do histogram matching adjustment?', value=true) do_histogram_matching
@@ -208,6 +209,7 @@ PERCENT_OVEREXPOSED_PIXELS = PERCENT_OVEREXPOSED_PIXELS
 COMPRESS_ON_SAVE = compress_on_save
 DO_B_BRANCH = do_b_branch
 DO_FUSION_BRANCH = do_fusion_branch
+RUN_B_BRANCH_UP_TO_TIME_PROJECTION = b_branch_only_up_to_time_projections
 RUN_FUSION_UP_TO_DOWNSAMPLED_PREVIEW = run_fusion_up_to_downsampled_preview
 RUN_FUSION_BRANCH_UP_TO_START_OF_FUSION = run_fusion_up_to_start_of_deconvolution
 CACHING_DIR = os.path.join(datasets_dir.getAbsolutePath(), "tmp")
@@ -1524,6 +1526,11 @@ def b_branch_processing(dataset_metadata_obj):
 				"\tChannel: %s Direction: %s Found existing max TIME-projection, using it. \n\t\t\t\t\t%s" % (channel, direction, max_time_proj_full_path))
 			max_time_proj = open_image(max_time_proj_full_path)
 
+		if RUN_B_BRANCH_UP_TO_TIME_PROJECTION:
+			logging.info("\tChannel: %s Direction: %s Configured to run only up to time-projection generation. Proceeding." % (
+			channel, direction))
+			continue
+
 		logging.info("\tChannel: %s Direction: %s Creating a crop template from a stack of max projections." % (
 			channel, direction))
 		if not auto_cropbox_error:
@@ -1541,6 +1548,10 @@ def b_branch_processing(dataset_metadata_obj):
 	
 	if auto_cropbox_error:
 		return False
+	
+	if RUN_B_BRANCH_UP_TO_TIME_PROJECTION:
+		logging_broadcast("B-Branch set to run only up to max. time projections.")
+		return True
 
 	# Main loop over the channels and directions for the dataset
 	for channel in range(1, dataset_metadata_obj.number_of_channels + 1):
