@@ -73,7 +73,7 @@ num_projections = 360/int(angleY)
 print("Rotating and creating projections")
 projections = clij2.create([stack_dims[0], stack_dims[1], num_projections], input.getNativeType())
 for i in range(num_projections):
-	angleY = (rotation_angleY * i + rotation_addition ) * math.pi / 180 
+	angleY = (rotation_angleY * i + rotation_addition ) * math.pi / 180  # you need to switch to angles for the newer version of CLIJ
 	print("Rotating by angle: %s" % (rotation_angleY * i))
 	clij2.rotate3D(input, rotated, angleX, angleY, angleZ, rotateAroundCenter)
 	clij2.multiplyImages(rotated, depth_adjustment_stack, rotated_adjusted)
