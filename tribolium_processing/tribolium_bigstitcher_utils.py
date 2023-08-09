@@ -77,7 +77,7 @@ def get_fusion_tranformation_from_xml_file(xml_path):
             for i in range(3):
                 # iterate through columns
                 for j in range(4):
-                    matrix[i][j] = float(matrix_str[i * 4 + j])          
+                    matrix[i][j] = float(matrix_str[i * 4 + j])        
             return matrix
     return False
 
@@ -118,16 +118,14 @@ def apply_transformation_bigstitcher_dataset(dataset_xml_path, affine_matrix):
 
     IJ.run("Apply Transformations", "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Affine apply=[Current view transformations (appends to current transforms)] define=Matrix same_transformation_for_all_timepoints same_transformation_for_all_angles all_timepoints_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, short_affine_matrix))
 
-def rotate_bigstitcher_dataset_0_timepoint(dataset_xml_path, axis_of_rotation, angle):
-    timepoint = 0
+def rotate_bigstitcher_dataset_1_timepoint(dataset_xml_path, axis_of_rotation, angle, timepoint):
     logging.info("Rotating dataset around: %s for angle=%s" % (axis_of_rotation, angle))
 
     run_string = "select=%s apply_to_angle=[All angles] apply_to_channel=[All channels] apply_to_illumination=[All illuminations] apply_to_tile=[All tiles] apply_to_timepoint=[All Timepoints] transformation=Rigid apply=[Current view transformations (appends to current transforms)] define=[Rotation around axis] same_transformation_for_all_angles axis_timepoint_%s_channel_0_illumination_0_all_angles=%s-axis rotation_timepoint_%s_channel_0_illumination_0_all_angles=%s" % (dataset_xml_path, timepoint,  axis_of_rotation, timepoint, angle)
     logging.info("Rotating dataset run string: %s " % run_string)
     IJ.run("Apply Transformations", run_string)
 
-def apply_transformation_bigstitcher_dataset_0_timepoint(dataset_xml_path, affine_matrix):
-    timepoint = 0
+def apply_transformation_bigstitcher_dataset_1_timepoint(dataset_xml_path, affine_matrix, timepoint):
     short_affine_matrix = [0 for i in range(12)]
     for i in range(len(affine_matrix) - 1):
         for j in range(len(affine_matrix[0])):

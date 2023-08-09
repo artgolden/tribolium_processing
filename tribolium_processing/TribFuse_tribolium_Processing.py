@@ -918,7 +918,7 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 	transformation_embryo_to_center = multiply_matrices(transformation_embryo_to_center, transf_to_raw)
 	transformation_embryo_to_center = inverse_matrix(transformation_embryo_to_center)
 
-	apply_transformation_bigstitcher_dataset_0_timepoint(raw_dataset_xml_path, transformation_embryo_to_center)
+	apply_transformation_bigstitcher_dataset_1_timepoint(raw_dataset_xml_path, transformation_embryo_to_center, timepoint=0)
 	embryo_crop_box = {
 		"x_min" : -1 * int(z_bounding_roi["embryo_length"] / 2 + 5),
 		"y_min" : -1 * int(z_bounding_roi["embryo_width"] / 2 + 5),
@@ -930,8 +930,8 @@ def segment_embryo_and_fuse_again_cropping_around_embryo(raw_dataset_xml_path, f
 
 	rotation_angle_z = round(z_bounding_roi["bounding_rect_angle"], 1)
 	rotation_angle_y = -1 * round(y_bounding_roi["bounding_rect_angle"], 1)
-	rotate_bigstitcher_dataset_0_timepoint(raw_dataset_xml_path, "z", rotation_angle_z)
-	rotate_bigstitcher_dataset_0_timepoint(raw_dataset_xml_path, "y", rotation_angle_y)
+	rotate_bigstitcher_dataset_1_timepoint(raw_dataset_xml_path, "z", rotation_angle_z, timepoint=0)
+	rotate_bigstitcher_dataset_1_timepoint(raw_dataset_xml_path, "y", rotation_angle_y, timepoint=0)
 
 
 	define_bounding_box_for_fusion(raw_dataset_xml_path, embryo_crop_box, "embryo_cropped")
@@ -1864,13 +1864,24 @@ def fusion_branch_processing(dataset_metadata_obj):
 											(1, dataset_metadata_obj.number_of_directions),
 											(IMAGE_PIXEL_DISTANCE_X, IMAGE_PIXEL_DISTANCE_Y, IMAGE_PIXEL_DISTANCE_Z),
 											reference_timepoint=reference_timepoint)
-			apply_transformation_bigstitcher_dataset(dataset_xml_path, upscaled_translation_embryo_to_center)
-			rotate_bigstitcher_dataset(dataset_xml_path, "z", segmentation_results.rotation_angle_z)
-			rotate_bigstitcher_dataset(dataset_xml_path, "y", segmentation_results.rotation_angle_y)
-			if dataset_metadata_obj.embryo_head_direction == "right":
-				rotate_bigstitcher_dataset(dataset_xml_path, "z", -90)
-			if dataset_metadata_obj.embryo_head_direction == "left":
-				rotate_bigstitcher_dataset(dataset_xml_path, "z", 90)
+			print("Timepoints to fuse:" + str(timepoints_to_fuse))
+			if len(timepoints_to_fuse) == 1:
+				timepoint = int(timepoints_to_fuse[0])
+				apply_transformation_bigstitcher_dataset_1_timepoint(dataset_xml_path, upscaled_translation_embryo_to_center, timepoint=timepoint)
+				rotate_bigstitcher_dataset_1_timepoint(dataset_xml_path, "z", segmentation_results.rotation_angle_z, timepoint=timepoint)
+				rotate_bigstitcher_dataset_1_timepoint(dataset_xml_path, "y", segmentation_results.rotation_angle_y, timepoint=timepoint)
+				if dataset_metadata_obj.embryo_head_direction == "right":
+					rotate_bigstitcher_dataset_1_timepoint(dataset_xml_path, "z", -90, timepoint=timepoint)
+				if dataset_metadata_obj.embryo_head_direction == "left":
+					rotate_bigstitcher_dataset_1_timepoint(dataset_xml_path, "z", 90, timepoint=timepoint)
+			else:
+				apply_transformation_bigstitcher_dataset(dataset_xml_path, upscaled_translation_embryo_to_center)
+				rotate_bigstitcher_dataset(dataset_xml_path, "z", segmentation_results.rotation_angle_z)
+				rotate_bigstitcher_dataset(dataset_xml_path, "y", segmentation_results.rotation_angle_y)
+				if dataset_metadata_obj.embryo_head_direction == "right":
+					rotate_bigstitcher_dataset(dataset_xml_path, "z", -90)
+				if dataset_metadata_obj.embryo_head_direction == "left":
+					rotate_bigstitcher_dataset(dataset_xml_path, "z", 90)
 			define_bounding_box_for_fusion(dataset_xml_path, upscaled_vertical_box, "embryo_cropped")
 
 
