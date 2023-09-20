@@ -1455,6 +1455,8 @@ def move_raw_files_to_organised(raw_images_dir, specimen_directions_in_channels,
 															time_point,
 															embryo_direction,
 															image_channel)
+		chan_dir = os.path.join(raw_images_dir, "CH%04d" % image_channel)
+		direction_dirs = get_directions_dirs_for_folder(chan_dir, ndirections)
 		os.rename(file_path, os.path.join(
 			direction_dirs[embryo_direction - 1], new_file_name))
 		logging.info("New file \n%s\n Full path:\n%s\n Original name: \n%s\n Original path: \n%s\n" % (new_file_name,
