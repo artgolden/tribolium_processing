@@ -121,7 +121,8 @@ Example JSON metadata file contents:
 			},
 			"head_direction": "right",
 			"use_manual_bounding_box": false,
-			"timepoints_range_to_fuse": "1,3-5,40-45"
+			"timepoints_range_to_fuse": "1,3-5,40-45",
+			"reference_timepoint": 4
 		},
 		{
 			"ID": 3,
@@ -265,6 +266,7 @@ class DatasetMetadata:
 	tp_selected_to_fuse = False
 	raw_aligned_stacks_dir = ""
 	example_raw_filename = None
+	reference_timepoint = -1
 
 	def __init__(
 				self, 
@@ -274,7 +276,8 @@ class DatasetMetadata:
 				embryo_head_direction,
 				use_manual_b_branch_bounding_box=False,
 				planes_to_keep_per_direction_b_branch=None,
-				tp_selected_to_fuse=False):
+				tp_selected_to_fuse=False,
+				reference_timepoint=-1):
 		self.id = id
 		self.root_dir = root_dir
 		self.datasets_dir = os.path.dirname(root_dir)
@@ -287,6 +290,7 @@ class DatasetMetadata:
 		self.raw_images_dir_path = os.path.join(root_dir, RAW_IMAGES_DIR_NAME)
 		self.tp_selected_to_fuse = tp_selected_to_fuse
 		self.raw_aligned_stacks_dir = os.path.join(self.root_dir, RAW_ALIGNED_DIR_NAME)
+		self.reference_timepoint = reference_timepoint
 
 
 
@@ -315,6 +319,9 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 		except Exception as e:
 			logging_broadcast("ERROR: could not parse timepoints_range_to_fuse in JSON metadata file. Encountered exception: %s" % e)
 			return False
+	reference_timepoint = -1
+	if "reference_timepoint" in metadata_dict.keys():
+		reference_timepoint = metadata_dict["reference_timepoint"]
 			
 
 	return DatasetMetadata(
@@ -324,7 +331,8 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 							embryo_head_direction = metadata_dict["head_direction"],
 							use_manual_b_branch_bounding_box=metadata_dict["use_manual_bounding_box"],
 							planes_to_keep_per_direction_b_branch=planes_to_keep_per_direction_b_branch,
-							tp_selected_to_fuse=tp_selected_to_fuse
+							tp_selected_to_fuse=tp_selected_to_fuse,
+							reference_timepoint=reference_timepoint
 							)
 		
 SegmentationResults = namedtuple("SegmentationResults", ["transformation_embryo_to_center", "rotation_angle_z", "rotation_angle_y", "embryo_crop_box"])
@@ -1335,6 +1343,13 @@ def is_timepoints_range_to_fuse_valid(tp_range_string):
 		return False
 	return True
 
+def is_reference_timepoint_valid(ref_timepoit):
+	if not isinstance(ref_timepoit, int):
+		return False
+	if not 0 < ref_timepoit < 1000000:
+		return False
+	return True
+
 def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 	for dataset in datasets_meta["datasets"]:
 		if "ID" not in dataset:
@@ -1375,6 +1390,11 @@ def metadata_file_check_for_errors(datasets_meta, datasets_dir):
 		if "timepoints_range_to_fuse" in dataset.keys() and not is_timepoints_range_to_fuse_valid(dataset["timepoints_range_to_fuse"]):
 			print("Error while parsing .json file: not valid timepoints_range_to_fuse \"%s\" for the dataset with ID: \"%s\". Exiting." % (
 				dataset["timepoints_range_to_fuse"], dataset_id))
+			print(EXAMPLE_JSON_METADATA_FILE)
+			exit(1)
+		if "reference_timepoint" in dataset.keys() and not is_reference_timepoint_valid(dataset["reference_timepoint"]):
+			print("Error while parsing .json file: not valid reference_timepoint \"%s\" for the dataset with ID: \"%s\". Exiting." % (
+				dataset["reference_timepoint"], dataset_id))
 			print(EXAMPLE_JSON_METADATA_FILE)
 			exit(1)
 		if specimen_directions_in_channels == ():
@@ -1804,6 +1824,9 @@ def fusion_branch_processing(dataset_metadata_obj):
 		logging_broadcast("ERROR: Could not extract timepoint file list. Skipping dataset.")
 		return False
 	reference_timepoint = min(timepoints_to_fuse)
+	if dataset_metadata_obj.reference_timepoint > 0:
+		if dataset_metadata_obj.reference_timepoint in timepoints_to_fuse:
+			reference_timepoint = dataset_metadata_obj.reference_timepoint
 
 	skip_to_fusion_FLAG = False
 	channel_1_fusion_folder = os.path.join(dataset_metadata_obj.root_dir, FUSED_DIR_NAME, "CH0001")
