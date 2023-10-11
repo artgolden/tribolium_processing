@@ -1319,6 +1319,9 @@ def get_raw_images_dir(datasets_dir, dataset_id):
 		logging.info(error_msg)
 		print(error_msg)
 		return None
+	if " " in raw_images_dir:
+		logging_broadcast("   Error: spaces are not allowed in the dataset directory path. Path: %s" % raw_images_dir)
+		return None
 	return raw_images_dir
 
 def is_dataset_ID_input_valid(dataset_id):
