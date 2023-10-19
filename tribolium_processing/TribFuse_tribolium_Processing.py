@@ -35,7 +35,6 @@
 # Last manual update of this line 2022.7.4 :)
 
 from collections import namedtuple
-from copy import deepcopy
 from distutils.dir_util import mkpath
 import math
 import os
@@ -44,7 +43,6 @@ import fnmatch
 import json
 import logging
 from datetime import datetime
-import shutil
 import subprocess
 import time
 import traceback
@@ -83,26 +81,6 @@ tribolium_image_utils.opsServiceImageUtilsLocal = ops
 tribolium_image_utils.dsServiceImageUtilsLocal = ds
 tribolium_image_utils.convertServiceImageUtilsLocal = convert
 
-# TODO: 
-# - Write current limitations and implicit assumptions in the documentation
-# - test 2 channel case
-# - make an option to load the PSF from a file
-# - Since we have to use same min when creating the full dataset, bigstitcher openes every timepoints and checks min/max of the images to determine global one. 
-# this is very slow. Probably need to switch to some other way of manually defining min/max.
-# - Check whether B-branch uses max projections stack cache (yes it does, need to put it in the Docs)
-# - Add a lot more logging to fusion branch. log all bigstitcher commands?
-# - restart and log stdout from CLIJ fusion process if it has failed 1 time
-# - make Process spawning work for Linux as well
-# - Add documentation to functions
-# - do projections and montages from fused data
-# - Add to telegram-send Docs info about the config file for each user
-# - Fix removing CLIJ fusion cache dir
-# - Fix if "use_manual_bounding_box": false is unset in JSON
-# - Make presence of all of the fields in the JSON mandatory (set to false when disabled) so that the user does not get silent ignoring of his parameters.
-# - Put logs from all previous runs into a subfolder in the datasets folder. Keep only last one.
-# - Make LOCK file for the file renaming 
-# - In telegram-send send which Datasets have failed and which finished successfully
-# - Fix cache renaming raw transformed stacks for fusion
 
 
 EXAMPLE_JSON_METADATA_FILE = """
@@ -216,7 +194,7 @@ RUN_FUSION_BRANCH_UP_TO_START_OF_FUSION = run_fusion_up_to_start_of_deconvolutio
 CACHING_DIR = os.path.join(datasets_dir.getAbsolutePath(), "tmp")
 if not os.path.exists(CACHING_DIR):
 	mkpath(CACHING_DIR)
-if not caching_dir is None: 
+if caching_dir is not None: 
 	CACHING_DIR = caching_dir.getAbsolutePath()
 IMAGE_DOWNSAMPLING_FACTOR_XY = image_downsampling_factor = 4
 ONLY_FUSE_FULL = False
@@ -267,6 +245,7 @@ class DatasetMetadata:
 	raw_aligned_stacks_dir = ""
 	example_raw_filename = None
 	reference_timepoint = -1
+	keep_all_planes = False
 
 	def __init__(
 				self, 
@@ -277,7 +256,8 @@ class DatasetMetadata:
 				use_manual_b_branch_bounding_box=False,
 				planes_to_keep_per_direction_b_branch=None,
 				tp_selected_to_fuse=False,
-				reference_timepoint=-1):
+				reference_timepoint=-1,
+				keep_all_planes=False):
 		self.id = id
 		self.root_dir = root_dir
 		self.datasets_dir = os.path.dirname(root_dir)
@@ -291,6 +271,7 @@ class DatasetMetadata:
 		self.tp_selected_to_fuse = tp_selected_to_fuse
 		self.raw_aligned_stacks_dir = os.path.join(self.root_dir, RAW_ALIGNED_DIR_NAME)
 		self.reference_timepoint = reference_timepoint
+		self.keep_all_planes = keep_all_planes
 
 
 
@@ -322,6 +303,9 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 	reference_timepoint = -1
 	if "reference_timepoint" in metadata_dict.keys():
 		reference_timepoint = metadata_dict["reference_timepoint"]
+	keep_all_planes = False
+	if "keep_all_planes" in metadata_dict.keys():
+		keep_all_planes = metadata_dict["keep_all_planes"]
 			
 
 	return DatasetMetadata(
@@ -332,7 +316,8 @@ def get_DatasetMetadata_obj_from_metadata_dict(metadata_dict, datasets_dir):
 							use_manual_b_branch_bounding_box=metadata_dict["use_manual_bounding_box"],
 							planes_to_keep_per_direction_b_branch=planes_to_keep_per_direction_b_branch,
 							tp_selected_to_fuse=tp_selected_to_fuse,
-							reference_timepoint=reference_timepoint
+							reference_timepoint=reference_timepoint,
+							keep_all_planes=keep_all_planes
 							)
 		
 SegmentationResults = namedtuple("SegmentationResults", ["transformation_embryo_to_center", "rotation_angle_z", "rotation_angle_y", "embryo_crop_box"])
@@ -355,7 +340,7 @@ def start_moving_files(file_paths, destination_paths):
 	for source, destination in zip(file_paths, destination_paths):
 		logging.info("Started move process of the file %s to %s" % (source, destination))
 		move_command = ["move", source, destination]
-		p = subprocess.Popen(move_command, shell=True)
+		subprocess.Popen(move_command, shell=True)
 
 def check_until_timeout_if_file_is_present(file_path, timeout=600):
 	for t in range(timeout):
@@ -575,7 +560,7 @@ def create_crop_template(max_time_projection, meta_dir, dataset_metadata_obj, da
 
 	return (crop_template, cropped_max_time_proj, updated_dataset_maximal_crop_box_dims)
 
-def find_planes_to_keep(zstack, meta_dir, manual_planes_to_keep):
+def find_planes_to_keep(zstack, meta_dir, manual_planes_to_keep, keep_all_planes=False):
 	"""Calculates planes to keep, so that the embryo is centered in them. 
 	Saves a cropped Y_projected stack for user assessment in the metadata directory. 
 
@@ -586,11 +571,17 @@ def find_planes_to_keep(zstack, meta_dir, manual_planes_to_keep):
 	Returns:
 		(int, int): (start_plane, stop_plane) ends have to be included.
 	"""
+
+	#TODO: make voxel dimensions a parameter
 	IJ.run(zstack, "Properties...",
 			"pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 	for_user_assessment = zstack.duplicate()
 
-	if manual_planes_to_keep is None:
+	if keep_all_planes is True:
+		logging.info("\t Keeping all planes.")
+		start_plane = 1
+		end_plane = zstack.getNSlices()
+	elif manual_planes_to_keep is None:
 		# This variant of implementation does not recalculate the pixel values and does not expand the image.
 		# So later, when we convert to mask, the image will be number_of_planes in height, and not 4*number_of_planes
 		# as would be with the Reslice made from GUI.
@@ -853,7 +844,6 @@ def create_and_fuse_preview_dataset(dataset_dir, file_pattern, angles_from_to, v
 	allowed_error_for_ransac = 2
 	number_of_ransac_iterations = "Normal"
 
-	reference_timepoint = 1
 
 	output_fused_path = os.path.join(dataset_dir, "fused.xml")
 
@@ -1419,7 +1409,7 @@ def send_notification_and_exit(message, do_exit=True):
 	command = [bot_notifications_exe, '-m', message]
 	if os.path.exists(bot_notifications_exe):
 		logging_broadcast("Sending notification to Telegram bot and exiting. Message: %s" % message)
-		p = subprocess.Popen(command)
+		subprocess.Popen(command)
 	else:
 		logging_broadcast("WARNING: could not find Telegram bot notifications executable at: %s. Skipping notifications." % bot_notifications_exe)
 	if do_exit: 
@@ -1693,17 +1683,33 @@ def b_branch_processing(dataset_metadata_obj):
 											"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 					raw_stack_cropped = crop_stack_by_template(
 						raw_stack, crop_template, dataset_metadata_obj)
-					if direction == 0:
+					manual_planes_to_keep = None
+					if dataset_metadata_obj.planes_to_keep_per_direction_b_branch is not None:
+						manual_planes_to_keep = (dataset_metadata_obj.planes_to_keep_per_direction_b_branch[direction - 1]["start"],
+							dataset_metadata_obj.planes_to_keep_per_direction_b_branch[direction - 1]["end"])
+						try:
+							planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir, manual_planes_to_keep) 
+						except Exception as e:
+							logging_broadcast("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
+								channel, direction, e))
+							return False
+					elif dataset_metadata_obj.keep_all_planes is True:
+						try:
+							planes_kept = find_planes_to_keep(raw_stack_cropped, m_dir, manual_planes_to_keep, keep_all_planes=True)
+						except Exception as e:
+							logging_broadcast("\tChannel: %s Direction: %s Encountered an exception while trying to find which planes to keep. Skipping the dataset. Exception: \n%s" % (
+								channel, direction, e))
+							return False
+					else:
+						manual_planes_to_keep = None
+
+					# TODO: we probably should not find what planes to keep just from 1 direction. Fix this
+					if direction == 0 and dataset_metadata_obj.keep_all_planes == False:
 						logging.info("\tChannel: %s Direction: %s Finding which planes to keep in raw image stacks." % (
-							channel, direction))
-						if dataset_metadata_obj.planes_to_keep_per_direction_b_branch is not None:
-							manual_planes_to_keep = (dataset_metadata_obj.planes_to_keep_per_direction_b_branch[direction - 1]["start"],
-							 dataset_metadata_obj.planes_to_keep_per_direction_b_branch[direction - 1]["end"])
-						else:
-							manual_planes_to_keep = None
+						channel, direction))
 						stack_for_finding_planes = open_image(raw_stack_files[0])
 						IJ.run(stack_for_finding_planes, "Properties...",
-											"frames=1 pixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
+											"frames=1 p	ixel_width=1.0000 pixel_height=1.0000 voxel_depth=4.0000")
 						stack_for_finding_planes = crop_stack_by_template(
 														stack_for_finding_planes, crop_template, dataset_metadata_obj)
 						try:
@@ -1713,9 +1719,10 @@ def b_branch_processing(dataset_metadata_obj):
 								channel, direction, e))
 							return False
 						logging.info("\tChannel: %s Direction: %s Keeping planes: %s." %
-									(channel, direction, planes_kept))
+																			(channel, direction, planes_kept))
 					logging.info(
 						"\tChannel: %s Direction: %s Cropping Raw stack for timepoint: %s/%s" % (channel, direction, current_active_stack, ntime_points))
+					# TODO: make voxel dims parameter
 					raw_stack_cropped = reset_img_properties(raw_stack_cropped, voxel_depth=4)
 					raw_stack_cropped = subset_planes(raw_stack_cropped, planes_kept)
 					save_tiff(raw_stack_cropped, os.path.join(
@@ -1764,7 +1771,6 @@ def b_branch_processing(dataset_metadata_obj):
 		histogram_thresholds = {"lower_threshold": histogram_thresholds[0], "upper_threshold": histogram_thresholds[1]}
 		with open(os.path.join(meta_dir, chan_dir_name, "histogram_thresholds_used_for_contrast_adjustment.JSON"), "w") as hist_json:
 			json.dump(histogram_thresholds, hist_json, indent=4)
-		
 		save_tiff(adj_montage_stack, os.path.join(montage_dir, adj_montage_stack_name.get_name()))
 
 
@@ -1971,14 +1977,13 @@ def process_datasets(datasets_dir, metadata_file, dataset_name_prefix):
 					 level=logging.INFO)
 
 	metadata_file_check_for_errors(datasets_meta=datasets_meta, datasets_dir=datasets_dir)
-	if not os.path.exists(CACHING_DIR) and CACHING_DIR != None:
+	if not os.path.exists(CACHING_DIR) and CACHING_DIR is not None:
 		logging_broadcast("Could not find cache directory specified. Exiting. Directory provided: %s" % CACHING_DIR)
 		exit(1)
 
 
 
 	for dataset in datasets_meta["datasets"]:
-		skip_the_dataset = False
 
 		dataset_metadata_obj = get_DatasetMetadata_obj_from_metadata_dict(dataset, datasets_dir)
 		if dataset_metadata_obj == False:
